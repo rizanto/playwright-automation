@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Chrome / Web scraping cache
+chrome_data/
+chrome_debug_data/
+scrape_results/
+archive/
+
+# Data files & logs
+*.csv
+*.xlsx
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Secrets and Configs
+config.txt
+config*.txt
+credentials.json
