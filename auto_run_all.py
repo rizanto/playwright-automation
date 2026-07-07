@@ -7,6 +7,7 @@ import scrape_fasihsm_rekap
 import export_to_sheets
 import scrape_ksa_padi
 import scrape_ksa_jagung
+import scrape_fasihdb_raw
 
 def main():
     print("=== Auto Run All Kegiatan ===")
@@ -27,9 +28,16 @@ def main():
     for i, section in enumerate(sections):
         print(f"{i+1}. {section}")
         
-    print("\nMasukkan nomor profil yang ingin dijalankan (pisahkan dengan koma, misal 1,3,4).")
-    print("Atau tekan Enter langsung (atau ketik 'all') untuk menjalankan semua.")
-    pilihan = input("Pilihan Anda: ").strip().lower()
+    # Mendeteksi pilihan profil dari argumen CLI (jika ada) untuk mendukung otomatisasi non-interaktif
+    # Kita menyaring argumen yang bukan flag (tidak diawali dengan '-')
+    non_flag_args = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    if non_flag_args:
+        pilihan = non_flag_args[0].strip().lower()
+        print(f"Pilihan Anda (via argumen): {pilihan}")
+    else:
+        print("\nMasukkan nomor profil yang ingin dijalankan (pisahkan dengan koma, misal 1,3,4).")
+        print("Atau tekan Enter langsung (atau ketik 'all') untuk menjalankan semua.")
+        pilihan = input("Pilihan Anda: ").strip().lower()
     
     selected_indices = []
     if not pilihan or pilihan == 'all':
@@ -58,7 +66,7 @@ def main():
         scrape_type = profile.get("type", "scrape_fasihsm_rekap").strip().lower()
         
         print(f"\n\n{'='*50}")
-        print(f"🚀 Memproses Kegiatan: {section} (Tipe: {scrape_type.upper()}) (Profil ke-{idx} dari {len(sections)})")
+        print(f"[RUNNING] Memproses Kegiatan: {section} (Tipe: {scrape_type.upper()}) (Profil ke-{idx} dari {len(sections)})")
         print(f"{'='*50}")
         
         try:
@@ -70,7 +78,7 @@ def main():
                 csv_filename = scrape_fasihsm_rekap.run(auto_profile_idx=idx)
                 
                 if not csv_filename or not os.path.exists(csv_filename):
-                    print(f"⚠️ Scraping gagal atau tidak menghasilkan file CSV untuk {section}. Melewati export...")
+                    print(f"[WARN] Scraping gagal atau tidak menghasilkan file CSV untuk {section}. Melewati export...")
                     continue
                     
                 print(f"\n--- Tahap 2: Export ke Google Sheets ({section}) ---")
@@ -84,16 +92,20 @@ def main():
                 print(f"\n--- Scraping & Export KSA JAGUNG ({section}) ---")
                 scrape_ksa_jagung.run_scrape(auto_profile_idx=idx)
                 
+            elif scrape_type == "scrape_fasihdb_raw":
+                print(f"\n--- Scraping & Export FASIH DB RAW ({section}) ---")
+                scrape_fasihdb_raw.run_scrape(auto_profile_idx=idx)
+                
             else:
-                print(f"❌ Tipe scraping '{scrape_type}' tidak dikenal. Melewati...")
+                print(f"[ERROR] Tipe scraping '{scrape_type}' tidak dikenal. Melewati...")
             
         except Exception as e:
-            print(f"❌ Terjadi kesalahan saat memproses {section}: {e}")
+            print(f"[ERROR] Terjadi kesalahan saat memproses {section}: {e}")
         finally:
             # Pastikan chrome mati di akhir setiap iterasi
             scrape_fasihsm_rekap.force_kill_cdp_chrome()
             
-    print("\n✅ Semua kegiatan telah selesai diproses secara otomatis!")
+    print("\n[SUCCESS] Semua kegiatan telah selesai diproses secara otomatis!")
 
 if __name__ == "__main__":
     main()
