@@ -4,12 +4,19 @@ import time
 import datetime
 import csv
 from playwright.sync_api import sync_playwright
+
+# Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+import vpn_auto_connect
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # Konfigurasi Default
 LOGIN_URL = "https://fasih-dashboard.bps.go.id/"
-CREDS_FILE = "credentials.json"
+CREDS_FILE = os.path.join(parent_dir, "credentials.json")
 
 # Default fallback values jika tidak diisi di config.txt
 USERNAME = "riva.adli"
@@ -21,7 +28,7 @@ SHEET_TAB_NAME = "ubinan26-s2"
 
 def load_config(auto_profile_idx=None):
     import configparser
-    config_file = "config.txt"
+    config_file = os.path.join(current_dir, "config.txt")
     if not os.path.exists(config_file):
         return {}
     config = configparser.ConfigParser()
@@ -143,6 +150,16 @@ def set_dropdown_filter(page, filter_name, value):
         return False
 
 def run_scrape(auto_profile_idx=None):
+    print("\n[INFO] Memeriksa status koneksi VPN BPS...")
+    if not vpn_auto_connect.is_vpn_connected():
+        print("[WARN] VPN terputus. Mencoba menghubungkan VPN otomatis...")
+        vpn_auto_connect.run_auto_vpn()
+        if not vpn_auto_connect.is_vpn_connected():
+            print("[ERROR] Gagal menyambungkan VPN. Scraping dihentikan demi keamanan.")
+            return None
+    else:
+        print("[SUCCESS] VPN BPS aktif/terhubung.")
+
     cfg = load_config(auto_profile_idx)
     username = cfg.get("username", USERNAME)
     password = cfg.get("password", PASSWORD)
@@ -160,7 +177,7 @@ def run_scrape(auto_profile_idx=None):
             dynamic_filters[filter_name] = value.strip()
 
     headless_mode = "--headless" in sys.argv
-    results_dir = "scrape_results"
+    results_dir = os.path.join(parent_dir, "scrape_results")
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
 

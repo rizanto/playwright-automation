@@ -5,10 +5,18 @@ import os
 import re
 import time
 import subprocess
+import sys
 from playwright.sync_api import sync_playwright
 
+# Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+import vpn_auto_connect
+
 def load_config(auto_profile_idx=None):
-    config_file = "config.txt"
+    config_file = os.path.join(current_dir, "config.txt")
     if not os.path.exists(config_file):
         with open(config_file, "w") as f:
             f.write("[Kegiatan_1_Sensus]\n")
@@ -96,9 +104,19 @@ def launch_real_chrome(headless=False):
         args.append("--headless=new")
         # Set User-Agent standar agar tidak ketahuan sebagai Headless Chrome
         args.append("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+    else:
+        args.append("--start-maximized")
         
     try:
-        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Gunakan STARTUPINFO dengan SW_HIDE agar 100% tidak ada window konsol/terminal kosong di Windows
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        
+        creation_flags = 0x08000000 if os.name == 'nt' else 0
+        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=creation_flags, startupinfo=startupinfo)
         time.sleep(3) # Wait for Chrome to initialize
         return proc
     except Exception as e:
@@ -108,14 +126,76 @@ def launch_real_chrome(headless=False):
 def force_kill_cdp_chrome():
     import subprocess
     try:
-        output = subprocess.check_output('wmic process where "name=\'chrome.exe\' and commandline like \'%--remote-debugging-port=9222%\'" get processid', shell=True).decode()
+        startupinfo = None
+        creation_flags = 0
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creation_flags = 0x08000000
+
+        output = subprocess.check_output(
+            'wmic process where "name=\'chrome.exe\' and commandline like \'%--remote-debugging-port=9222%\'" get processid',
+            shell=True,
+            creationflags=creation_flags,
+            startupinfo=startupinfo
+        ).decode()
         for line in output.splitlines():
             line = line.strip()
             if line.isdigit():
                 pid = line
-                subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(
+                    f"taskkill /F /PID {pid}", 
+                    shell=True, 
+                    stdout=subprocess.DEVNULL, 
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creation_flags,
+                    startupinfo=startupinfo
+                )
     except:
         pass
+
+def refresh_session(context, username, password):
+    """Membuka tab baru, melakukan login ulang ke Fasih-SM untuk memperbarui session token, lalu menutup tab tersebut."""
+    print("[INFO] Mencoba memperbarui session token di tab baru...")
+    login_page = None
+    try:
+        login_page = context.new_page()
+        # Set viewport standar
+        login_page.set_viewport_size({"width": 1920, "height": 1080})
+        
+        login_page.goto("https://fasih-sm.bps.go.id/oauth_login.html", timeout=45000, wait_until="domcontentloaded")
+        
+        # Cari tombol Login SSO BPS
+        try:
+            login_page.locator("text=SSO BPS").first.click(timeout=5000)
+        except:
+            try:
+                login_page.click("//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sso bps')]", timeout=5000)
+            except:
+                pass
+                
+        # Jika mengarah ke SSO BPS
+        if "sso.bps.go.id" in login_page.url:
+            print("[INFO] Mengisi kredensial SSO di tab baru...")
+            login_page.fill('input[name="username"]', username)
+            login_page.fill('input[name="password"]', password)
+            login_page.click('button[type="submit"], input[type="submit"]')
+            
+            # Tunggu redirect kembali
+            login_page.wait_for_url(lambda url: "fasih-sm.bps.go.id" in url, timeout=20000)
+            
+        print("[SUCCESS] Session token berhasil diperbarui di tab baru!")
+        return True
+    except Exception as e:
+        print(f"[WARN] Gagal memperbarui session token di tab baru: {e}")
+        return False
+    finally:
+        if login_page:
+            try:
+                login_page.close()
+            except:
+                pass
 
 def run(auto_profile_idx=None):
     force_kill_cdp_chrome()
@@ -190,8 +270,9 @@ def run(auto_profile_idx=None):
                 
         page = context.pages[0] if len(context.pages) > 0 else context.new_page()
         
-        # Set viewport ke ukuran desktop (Wajib untuk mode headless agar tombol tidak tersembunyi di menu HP)
-        page.set_viewport_size({"width": 1920, "height": 1080})
+        # Set viewport ke ukuran desktop jika headless
+        if headless_mode:
+            page.set_viewport_size({"width": 1366, "height": 768})
         
         print("Navigasi ke halaman Login Fasih...")
         try:
@@ -229,9 +310,9 @@ def run(auto_profile_idx=None):
             print("Terjadi sedikit masalah saat auto-login:", e)
             print("Script akan tetap memaksa lanjut ke target URL...")
 
-        print("Menavigasi ke URL target dasbor kegiatan (menunggu hingga 3 menit)...")
+        print("Menavigasi ke URL target dasbor kegiatan (menunggu hingga 4 menit)...")
         try:
-            page.goto(target_url, timeout=180000, wait_until="domcontentloaded")
+            page.goto(target_url, timeout=240000, wait_until="domcontentloaded")
         except Exception as e:
             print("Peringatan saat load URL target:", e)
             
@@ -288,9 +369,16 @@ def run(auto_profile_idx=None):
                     # Deteksi halaman error 500 dari BPS
                     is_error_page = page.evaluate("() => document.body.innerText.includes(\"There's some error\") || document.body.innerText.includes(\"The server encountered an unexpected condition\")")
                     if is_error_page:
-                        print("\n[!] Terdeteksi halaman error dari server BPS. Merefresh halaman (F5)...")
+                        if not vpn_auto_connect.is_vpn_connected():
+                            print("\n[!] VPN terdeteksi TERPUTUS! Menghubungkan kembali VPN...")
+                            vpn_auto_connect.run_auto_vpn()
+                            time.sleep(5)
+                        else:
+                            print("\n[!] Terdeteksi halaman error dari server BPS. Memperbarui session via login ulang di tab baru...")
+                            refresh_session(context, username, password)
+                        print("Merefresh halaman utama (F5)...")
                         try:
-                            page.reload(timeout=60000, wait_until="domcontentloaded")
+                            page.reload(timeout=120000, wait_until="domcontentloaded")
                             time.sleep(5)
                         except:
                             pass
@@ -457,12 +545,16 @@ def run(auto_profile_idx=None):
             print(f"Nama kegiatan terdeteksi (fallback): {survey_name}")
         
         # Logika Resume
-        state_file = "scrape_results/resume_state.json"
+        results_dir = os.path.join(parent_dir, "scrape_results")
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+            
+        state_file = os.path.join(results_dir, "resume_state.json")
         resume_mode = False
         all_records = []
         current_page = 0
         
-        import os, datetime
+        import datetime
         
         if os.path.exists(state_file):
             try:
@@ -487,7 +579,7 @@ def run(auto_profile_idx=None):
         
         if not resume_mode:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-            output_filename = f"scrape_results/{survey_name}_rekap_petugas_{target_role.lower()}_{timestamp}.csv"
+            output_filename = os.path.join(results_dir, f"{survey_name}_rekap_petugas_{target_role.lower()}_{timestamp}.csv")
             output_filename = output_filename.replace(" ", "_")
         
         js_fetch_single = """
@@ -555,6 +647,13 @@ def run(auto_profile_idx=None):
                         time.sleep(wait_time)
                         
                         # Refresh halaman untuk mereset koneksi dan XSRF-TOKEN
+                        if not vpn_auto_connect.is_vpn_connected():
+                            print("\n[!] VPN terdeteksi TERPUTUS saat penarikan data! Menghubungkan kembali VPN...")
+                            vpn_auto_connect.run_auto_vpn()
+                            time.sleep(5)
+                        else:
+                            print("Memperbarui session via login ulang di tab baru...")
+                            refresh_session(context, username, password)
                         print("Mencoba merefresh halaman (F5) untuk memulihkan koneksi API...")
                         try:
                             page.reload(timeout=60000, wait_until="domcontentloaded")

@@ -5,6 +5,13 @@ import datetime
 import csv
 import pandas as pd
 from playwright.sync_api import sync_playwright
+
+# Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+import vpn_auto_connect
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -15,7 +22,7 @@ PASSWORD = "Akun0000"
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1gGtp8ffrOhEEgw2pR4TTRfjUH-V2PPJLieDGqvItJyk/edit?usp=sharing"
 SHEET_TAB_NAME = "ksa-jagung"
-CREDS_FILE = "credentials.json"
+CREDS_FILE = os.path.join(parent_dir, "credentials.json")
 
 def parse_downloaded_file(file_path):
     """Membaca file hasil download (.xlsx, .xls, .csv, atau HTML table disguise) menjadi list of list."""
@@ -71,7 +78,7 @@ def parse_downloaded_file(file_path):
 
 def load_config(auto_profile_idx=None):
     import configparser
-    config_file = "config.txt"
+    config_file = os.path.join(current_dir, "config.txt")
     if not os.path.exists(config_file):
         return {}
     config = configparser.ConfigParser()
@@ -127,6 +134,16 @@ def export_to_google_sheet(data, sheet_url, sheet_tab_name):
         return False
 
 def run_scrape(auto_profile_idx=None):
+    print("\n[INFO] Memeriksa status koneksi VPN BPS...")
+    if not vpn_auto_connect.is_vpn_connected():
+        print("[WARN] VPN terputus. Mencoba menghubungkan VPN otomatis...")
+        vpn_auto_connect.run_auto_vpn()
+        if not vpn_auto_connect.is_vpn_connected():
+            print("[ERROR] Gagal menyambungkan VPN. Scraping dihentikan demi keamanan.")
+            return None
+    else:
+        print("[SUCCESS] VPN BPS aktif/terhubung.")
+
     cfg = load_config(auto_profile_idx)
     username = cfg.get("username", USERNAME)
     password = cfg.get("password", PASSWORD)
@@ -134,7 +151,7 @@ def run_scrape(auto_profile_idx=None):
     sheet_tab_name = cfg.get("sheet_tab_name", SHEET_TAB_NAME)
 
     headless_mode = "--headless" in sys.argv
-    results_dir = "scrape_results"
+    results_dir = os.path.join(parent_dir, "scrape_results")
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
 

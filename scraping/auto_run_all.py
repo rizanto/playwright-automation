@@ -2,16 +2,22 @@ import configparser
 import os
 import sys
 
+# Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 # Import the main modules
 import scrape_fasihsm_rekap
 import export_to_sheets
 import scrape_ksa_padi
 import scrape_ksa_jagung
 import scrape_fasihdb_raw
+import vpn_auto_connect
 
 def main():
     print("=== Auto Run All Kegiatan ===")
-    config_file = "config.txt"
+    config_file = os.path.join(current_dir, "config.txt")
     if not os.path.exists(config_file):
         print("[ERROR] config.txt tidak ditemukan.")
         return
@@ -59,6 +65,17 @@ def main():
     # Memastikan flag --headless ada di sys.argv agar proses berjalan di latar belakang
     if "--headless" not in sys.argv:
         sys.argv.append("--headless")
+        
+    # Memastikan VPN BPS terhubung sebelum memulai scraping
+    print("\n[INFO] Memeriksa status koneksi VPN BPS sebelum scraping...")
+    if not vpn_auto_connect.is_vpn_connected():
+        print("[WARN] VPN terputus. Mencoba menghubungkan VPN otomatis...")
+        vpn_auto_connect.run_auto_vpn()
+        if not vpn_auto_connect.is_vpn_connected():
+            print("[ERROR] Gagal menyambungkan VPN. Scraping dihentikan demi keamanan.")
+            return
+    else:
+        print("[SUCCESS] VPN BPS aktif/terhubung.")
         
     for idx in selected_indices:
         section = sections[idx - 1]
