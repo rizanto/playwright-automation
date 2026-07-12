@@ -37,9 +37,10 @@ def start_forticlient():
         return False
 
 def trigger_forticlient_saml_login():
-    """Memicu klik tombol SAML Login pada jendela FortiClient menggunakan UI Automation untuk fokus dan SendKeys untuk navigasi."""
-    print("[INFO] Mengirim perintah fokus dan klik SAML Login (TAB, ENTER, DOWN, ENTER, TAB 3x, ENTER)...")
+    print("[INFO] Mengaktifkan FortiClient dan menekan tombol Connect...")
     fallback_script = """
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
     Add-Type -AssemblyName Microsoft.VisualBasic
     Add-Type -AssemblyName System.Windows.Forms
     
@@ -58,35 +59,97 @@ def trigger_forticlient_saml_login():
     if ($process) {
         try {
             [Microsoft.VisualBasic.Interaction]::AppActivate($process.Id)
-            Start-Sleep -Milliseconds 800
+            Start-Sleep -Seconds 2
             
-            [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait('{TAB 3}')
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-            Write-Output 'SUKSES: Fokus berhasil dan tombol navigasi terkirim.'
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $fortiWin = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -match "FortiClient" } | Select-Object -First 1
+            
+            if ($fortiWin) {
+                Write-Output 'Mencoba mengeklik tombol Connect menggunakan klik koordinat fisik...'
+                
+                # Load API mouse_event, SetCursorPos, ShowWindow, dan SetWindowPos dari user32.dll
+                $mouseCode = @"
+                using System;
+                using System.Runtime.InteropServices;
+                public class Win32Mouse {
+                    [DllImport("user32.dll")]
+                    public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo);
+                    
+                    [DllImport("user32.dll")]
+                    public static extern bool SetCursorPos(int X, int Y);
+                    
+                    [DllImport("user32.dll")]
+                    public static extern bool GetCursorPos(out POINT lpPoint);
+                    
+                    [DllImport("user32.dll")]
+                    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+                    
+                    [DllImport("user32.dll")]
+                    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+                    
+                    [StructLayout(LayoutKind.Sequential)]
+                    public struct POINT {
+                        public int X;
+                        public int Y;
+                    }
+                    
+                    public const int SW_RESTORE = 9;
+                    public const uint SWP_SHOWWINDOW = 0x0040;
+                    public const int MOUSEEVENTF_LEFTDOWN = 0x02;
+                    public const int MOUSEEVENTF_LEFTUP = 0x04;
+                }
+"@
+                Add-Type -TypeDefinition $mouseCode -ErrorAction SilentlyContinue
+                
+                # Normalisasi jendela: kembalikan dari Maximize (jika ada) dan paksa ukuran ke 900x800 di posisi (100, 100)
+                # Menggunakan NativeWindowHandle dari UIA agar 100% tepat mengontrol jendela GUI yang aktif
+                $hwnd = [IntPtr]$fortiWin.Current.NativeWindowHandle
+                if ($hwnd -ne [IntPtr]::Zero) {
+                    Write-Output '[INFO] Menormalisasi ukuran jendela FortiClient ke 900x800...'
+                    [Win32Mouse]::ShowWindow($hwnd, [Win32Mouse]::SW_RESTORE)
+                    Start-Sleep -Milliseconds 200
+                    [Win32Mouse]::SetWindowPos($hwnd, [IntPtr]::Zero, 100, 100, 900, 800, [Win32Mouse]::SWP_SHOWWINDOW)
+                    Start-Sleep -Milliseconds 300
+                }
+                
+                # Karena jendela sudah dipaksa ke (100,100) dengan ukuran 900x800,
+                # letak tombol Connect akan selalu berada di posisi statis yang sangat akurat ini:
+                $clickX = 550
+                $clickY = 720
+                
+                # Simpan posisi mouse user saat ini menggunakan GetCursorPos (piksel fisik)
+                $oldPos = New-Object Win32Mouse+POINT
+                [Win32Mouse]::GetCursorPos([ref]$oldPos)
+                
+                # Pindahkan kursor menggunakan SetCursorPos (piksel fisik), klik, lalu kembalikan kursor user
+                [Win32Mouse]::SetCursorPos($clickX, $clickY)
+                Start-Sleep -Milliseconds 150
+                [Win32Mouse]::mouse_event(0x02, 0, 0, 0, 0) # Left Down
+                Start-Sleep -Milliseconds 100
+                [Win32Mouse]::mouse_event(0x04, 0, 0, 0, 0) # Left Up
+                Start-Sleep -Milliseconds 150
+                [Win32Mouse]::SetCursorPos($oldPos.X, $oldPos.Y)
+                
+                Write-Output "SUKSES: Tombol Connect diklik secara koordinat fisik di ($clickX, $clickY)."
+            } else {
+                Write-Output 'ERROR: Jendela UIA FortiClient tidak terdeteksi.'
+            }
         } catch {
-            Write-Output "ERROR: Gagal memfokuskan jendela: $_"
+            Write-Output "ERROR: Gagal memanipulasi jendela: $_"
         }
     } else {
-        Write-Output 'ERROR: Jendela FortiClient tidak ditemukan.'
+        Write-Output 'ERROR: Proses FortiClient tidak ditemukan.'
     }
     """
     res = subprocess.run(["powershell", "-Command", fallback_script], capture_output=True, text=True)
-    print(f"[WIN32 KEY] {res.stdout.strip()}")
+    print(f"[WIN32 UIA] {res.stdout.strip()}")
 
 def handle_embedded_login_popup():
-    """Mendeteksi jendela pop-up login SSO internal FortiClient dan mengisi kredensial via SendKeys."""
+    """Mendeteksi jendela pop-up login SSO internal FortiClient dan mengisi kredensial secara persisten."""
     print("[INFO] Menunggu kemunculan jendela login SSO internal BPS...")
     login_script = rf"""
     Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
     Add-Type -AssemblyName Microsoft.VisualBasic
     Add-Type -AssemblyName System.Windows.Forms
     
@@ -99,15 +162,14 @@ def handle_embedded_login_popup():
     while (-not $found -and $elapsed -lt $timeout) {{
         $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
         
-        # 1. Cari di level atas (Desktop root)
-        $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "Single Sign-On BPS|FortiClient \(\d+\)" }} | Select-Object -First 1
+        # Cari jendela SSO
+        $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
         
-        # 2. Jika tidak ditemukan, cari sebagai descendant dari jendela utama FortiClient
         if (-not $loginWin) {{
             $fortiWin = $allWindows | Where-Object {{ $_.Current.Name -like "*FortiClient*" }} | Select-Object -First 1
             if ($fortiWin) {{
                 $descendants = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-                $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "Single Sign-On BPS|FortiClient \(\d+\)" }} | Select-Object -First 1
+                $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
             }}
         }}
         
@@ -116,24 +178,56 @@ def handle_embedded_login_popup():
             $winTitle = $loginWin.Current.Name
             Write-Output "Jendela login terdeteksi: '$winTitle'"
             
-            # Berikan jeda kecil agar form input siap menerima fokus
-            Start-Sleep -Seconds 2
+            # Waktu tunggu yang lebih lama agar halaman SSO web selesai dimuat dengan sempurna
+            Write-Output "Menunggu halaman SSO ter-load (10 detik)..."
+            Start-Sleep -Seconds 10
             
-            # Aktifkan jendela login
+            # Coba cari edit box username jika terekspos ke UIA
+            $editCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+            $inputs = $loginWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCond)
+            
+            if ($inputs -and $inputs.Count -ge 2) {{
+                Write-Output "SUKSES: Form input web terekspos. Menulis langsung via ValuePattern."
+                try {{
+                    $userPattern = $inputs[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
+                    $userPattern.SetValue("{USERNAME}")
+                    $passPattern = $inputs[1].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
+                    $passPattern.SetValue("{PASSWORD}")
+                    
+                    # Fokus password field dan enter
+                    $inputs[1].SetFocus()
+                    Start-Sleep -Milliseconds 100
+                    [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
+                    break
+                }} catch {{
+                    Write-Output "WARN: ValuePattern gagal, fallback ke SendKeys."
+                }}
+            }}
+            
+            # Fallback agresif jika form web tidak terekspos ke API UIA native Windows
+            Write-Output "Menggunakan injeksi agresif SendKeys..."
             [Microsoft.VisualBasic.Interaction]::AppActivate($loginWin.Current.ProcessId)
-            $loginWin.SetFocus()
+            Start-Sleep -Milliseconds 1000
+            
+            try {{
+                $loginWin.SetFocus()
+            }} catch {{
+                Write-Output "WARN: SetFocus pada jendela utama gagal, melanjutkan..."
+            }}
             Start-Sleep -Milliseconds 500
             
-            # Kirim Username, TAB, Password, ENTER
-            Write-Output "Mengirimkan kredensial login..."
-            [System.Windows.Forms.SendKeys]::SendWait("{USERNAME}")
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
-            Start-Sleep -Milliseconds 200
-            [System.Windows.Forms.SendKeys]::SendWait("{PASSWORD}")
-            Start-Sleep -Milliseconds 200
+            # Tekan klik/enter untuk memastikan kotak username mendapat fokus
             [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
-            Write-Output "SUKSES: Form login disubmit."
+            Start-Sleep -Milliseconds 500
+            
+            [System.Windows.Forms.SendKeys]::SendWait("{USERNAME}")
+            Start-Sleep -Milliseconds 500
+            [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
+            Start-Sleep -Milliseconds 500
+            [System.Windows.Forms.SendKeys]::SendWait("{PASSWORD}")
+            Start-Sleep -Milliseconds 500
+            [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
+            Write-Output "SUKSES: Form login disubmit via injeksi agresif."
             break
         }}
         Start-Sleep -Seconds 1

@@ -1,9 +1,0 @@
-- `[x]` Buat berkas skrip baru `automate_anomaly_reject.py`
-- `[x]` Tulis fungsi pembuka dan pembuat browser Playwright dengan CDP remote debugging
-- `[x]` Tulis logika login SSO BPS otomatis jika terdeteksi belum masuk sesi
-- `[x]` Tulis logika navigasi detail assignment dan pencarian tombol "Review" (klik untuk buka tab baru)
-- `[x]` Tulis logika di tab baru: klik floating button (+), pilih "Edit Assignment"
-- `[x]` Tulis logika navigasi CATATAN: centang/uncentang checkbox anomali sesuai panduan
-- `[x]` Tulis logika pengiriman (KIRIM) dengan pengamanan `DRY_RUN`
-- `[x]` Tulis logika kembali (pilih "TINGGALKAN" pada konfirmasi) dan lakukan proses Reject dengan pengamanan `DRY_RUN`
-- `[/]` Lakukan pengujian mandiri dalam mode non-headless (dengan DRY_RUN aktif)

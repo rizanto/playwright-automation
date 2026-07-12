@@ -102,6 +102,7 @@ def launch_real_chrome(headless=False):
     ]
     if headless:
         args.append("--headless=new")
+        args.append("--window-position=-2400,-2400") # Pindahkan jendela kosong di luar layar (Bug Chrome 129+ Windows)
         # Set User-Agent standar agar tidak ketahuan sebagai Headless Chrome
         args.append("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
     else:
@@ -124,34 +125,16 @@ def launch_real_chrome(headless=False):
         return False
 
 def force_kill_cdp_chrome():
-    import subprocess
+    import psutil
     try:
-        startupinfo = None
-        creation_flags = 0
-        if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            creation_flags = 0x08000000
-
-        output = subprocess.check_output(
-            'wmic process where "name=\'chrome.exe\' and commandline like \'%--remote-debugging-port=9222%\'" get processid',
-            shell=True,
-            creationflags=creation_flags,
-            startupinfo=startupinfo
-        ).decode()
-        for line in output.splitlines():
-            line = line.strip()
-            if line.isdigit():
-                pid = line
-                subprocess.run(
-                    f"taskkill /F /PID {pid}", 
-                    shell=True, 
-                    stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL,
-                    creationflags=creation_flags,
-                    startupinfo=startupinfo
-                )
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if proc.info['name'] and proc.info['name'].lower() == 'chrome.exe':
+                    cmdline = proc.info['cmdline']
+                    if cmdline and any('--remote-debugging-port=9222' in arg for arg in cmdline):
+                        proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
     except:
         pass
 
