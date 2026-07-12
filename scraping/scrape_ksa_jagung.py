@@ -17,8 +17,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # Konfigurasi Target
 LOGIN_URL = "https://manajemen-ksapro.bps.go.id/login"
-USERNAME = "ilham.rizanto"
-PASSWORD = "Akun0000"
+
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1gGtp8ffrOhEEgw2pR4TTRfjUH-V2PPJLieDGqvItJyk/edit?usp=sharing"
 SHEET_TAB_NAME = "ksa-jagung"
@@ -145,8 +144,8 @@ def run_scrape(auto_profile_idx=None):
         print("[SUCCESS] VPN BPS aktif/terhubung.")
 
     cfg = load_config(auto_profile_idx)
-    username = cfg.get("username", USERNAME)
-    password = cfg.get("password", PASSWORD)
+    username = cfg.get("username")
+    password = cfg.get("password")
     sheet_url = cfg.get("sheet_url", SHEET_URL)
     sheet_tab_name = cfg.get("sheet_tab_name", SHEET_TAB_NAME)
 

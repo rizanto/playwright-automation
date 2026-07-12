@@ -4,8 +4,36 @@ import time
 import socket
 import subprocess
 
-USERNAME = "ilham.rizanto"
-PASSWORD = "Akun0000"
+def load_vpn_credentials():
+    import configparser
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Coba dari automation/config.txt dulu
+    auto_config = os.path.join(current_dir, "automation", "config.txt")
+    if os.path.exists(auto_config):
+        cfg = configparser.ConfigParser()
+        cfg.read(auto_config)
+        if "Automation" in cfg:
+            user = cfg["Automation"].get("username", "")
+            pwd = cfg["Automation"].get("password", "")
+            if user and pwd:
+                return user, pwd
+                
+    # Kalau tidak ada, coba dari scraping/config.txt
+    scrape_config = os.path.join(current_dir, "scraping", "config.txt")
+    if os.path.exists(scrape_config):
+        cfg = configparser.ConfigParser()
+        cfg.read(scrape_config)
+        sections = cfg.sections()
+        if sections:
+            for sec in sections:
+                user = cfg[sec].get("username", "")
+                pwd = cfg[sec].get("password", "")
+                if user and pwd:
+                    return user, pwd
+                    
+    print("[ERROR] Kredensial VPN tidak ditemukan di automation/config.txt atau scraping/config.txt.")
+    sys.exit(1)
 
 def is_vpn_connected():
     """Memeriksa apakah VPN aktif dengan mencoba melakukan koneksi socket ke host internal BPS."""
@@ -144,7 +172,7 @@ def trigger_forticlient_saml_login():
     res = subprocess.run(["powershell", "-Command", fallback_script], capture_output=True, text=True)
     print(f"[WIN32 UIA] {res.stdout.strip()}")
 
-def handle_embedded_login_popup():
+def handle_embedded_login_popup(username, password):
     """Mendeteksi jendela pop-up login SSO internal FortiClient dan mengisi kredensial secara persisten."""
     print("[INFO] Menunggu kemunculan jendela login SSO internal BPS...")
     login_script = rf"""
@@ -190,9 +218,9 @@ def handle_embedded_login_popup():
                 Write-Output "SUKSES: Form input web terekspos. Menulis langsung via ValuePattern."
                 try {{
                     $userPattern = $inputs[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
-                    $userPattern.SetValue("{USERNAME}")
+                    $userPattern.SetValue("{username}")
                     $passPattern = $inputs[1].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
-                    $passPattern.SetValue("{PASSWORD}")
+                    $passPattern.SetValue("{password}")
                     
                     # Fokus password field dan enter
                     $inputs[1].SetFocus()
@@ -220,11 +248,11 @@ def handle_embedded_login_popup():
             [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
             Start-Sleep -Milliseconds 500
             
-            [System.Windows.Forms.SendKeys]::SendWait("{USERNAME}")
+            [System.Windows.Forms.SendKeys]::SendWait("{username}")
             Start-Sleep -Milliseconds 500
             [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
             Start-Sleep -Milliseconds 500
-            [System.Windows.Forms.SendKeys]::SendWait("{PASSWORD}")
+            [System.Windows.Forms.SendKeys]::SendWait("{password}")
             Start-Sleep -Milliseconds 500
             [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
             Write-Output "SUKSES: Form login disubmit via injeksi agresif."
@@ -257,6 +285,8 @@ def run_auto_vpn():
         print("[SUCCESS] VPN BPS sudah aktif/tersambung. Tidak perlu menghubungkan ulang.")
         return
         
+    username, password = load_vpn_credentials()
+        
     # 1. Jalankan FortiClient GUI
     if not start_forticlient():
         return
@@ -265,7 +295,7 @@ def run_auto_vpn():
     trigger_forticlient_saml_login()
     
     # 3. Tangani jendela login internal yang muncul
-    handle_embedded_login_popup()
+    handle_embedded_login_popup(username, password)
     
     # 4. Tunggu deteksi koneksi VPN aktif
     print("[INFO] Memantau status koneksi VPN internal BPS...")
@@ -286,3 +316,4 @@ def run_auto_vpn():
 
 if __name__ == "__main__":
     run_auto_vpn()
+

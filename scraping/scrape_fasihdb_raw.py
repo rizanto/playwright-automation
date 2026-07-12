@@ -19,8 +19,7 @@ LOGIN_URL = "https://fasih-dashboard.bps.go.id/"
 CREDS_FILE = os.path.join(parent_dir, "credentials.json")
 
 # Default fallback values jika tidak diisi di config.txt
-USERNAME = "riva.adli"
-PASSWORD = "adliriva16"
+
 TARGET_URL = "https://fasih-dashboard.bps.go.id/superset/dashboard/ubinan26s/"
 SUBROUND = "2"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1gGtp8ffrOhEEgw2pR4TTRfjUH-V2PPJLieDGqvItJyk/edit?usp=sharing"
@@ -161,8 +160,8 @@ def run_scrape(auto_profile_idx=None):
         print("[SUCCESS] VPN BPS aktif/terhubung.")
 
     cfg = load_config(auto_profile_idx)
-    username = cfg.get("username", USERNAME)
-    password = cfg.get("password", PASSWORD)
+    username = cfg.get("username")
+    password = cfg.get("password")
     target_url = cfg.get("target_url", TARGET_URL)
     sheet_url = cfg.get("sheet_url", SHEET_URL)
     sheet_tab_name = cfg.get("sheet_tab_name", SHEET_TAB_NAME)
