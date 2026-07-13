@@ -148,8 +148,9 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
     """Mengeklik tombol melayang (+) dan memastikan menu/efek target muncul."""
     print("[INFO] Mencari floating button (+) di kanan bawah...")
     
-    # Selektor spesifik untuk Ant Design FloatButton atau Floating Action Button
+    # Selektor spesifik untuk Ant Design FloatButton atau Custom FAB
     fab_selectors = [
+        "button.fab-button",
         ".ant-float-btn-menu-trigger",
         ".ant-float-btn-body",
         ".ant-float-btn",
@@ -249,17 +250,18 @@ def login_sso_tab(sso_tab, username, password):
     print("[INFO] Sesi login kosong. Melakukan login SSO BPS...")
     # Klik tombol Login SSO BPS
     try:
-        sso_tab.locator("text=SSO BPS").first.click(timeout=8000)
-    except Exception:
-        try:
-            sso_tab.click("//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sso bps')]", timeout=8000)
-        except Exception as e:
-            print(f"[WARN] Gagal klik SSO BPS: {e}")
+        btn = sso_tab.locator("text=SSO BPS").first
+        if btn.count() > 0:
+            btn.click(force=True, timeout=5000)
+        else:
+            sso_tab.click("//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sso bps')]", force=True, timeout=5000)
+    except Exception as e:
+        print(f"[WARN] Gagal klik SSO BPS (namun navigasi mungkin sudah berjalan): {e}")
             
-    # Tunggu redirect ke sso.bps.go.id dengan batas 30 detik
+    # Tunggu redirect ke sso.bps.go.id dengan batas 45 detik
     try:
         import re
-        sso_tab.wait_for_url(re.compile(r".*sso\.bps\.go\.id.*"), timeout=30000)
+        sso_tab.wait_for_url(re.compile(r".*sso\.bps\.go\.id.*"), timeout=45000)
         print("[INFO] Mengisi kredensial SSO BPS pada Tab 1...")
         sso_tab.fill('input[name="username"]', username, timeout=10000)
         sso_tab.fill('input[name="password"]', password, timeout=10000)
@@ -512,30 +514,26 @@ def run_automation():
 
             # Pop-up konfirmasi tinggalkan halaman (Discard changes)
             print("[INFO] Mengecek pop-up konfirmasi tinggalkan halaman...")
-            leave_btn = new_page.locator("div[role='dialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan'), div[role='dialog'] button:has-text('Kembali')").first
+            leave_btn = new_page.locator("div[role='dialog'] button:has-text('Keluar'), div[role='alertdialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan'), div[role='alertdialog'] button:has-text('Tinggalkan'), div[role='dialog'] button:has-text('Kembali'), div[role='alertdialog'] button:has-text('Kembali')").first
             if leave_btn.count() > 0:
                 print("[INFO] Memilih 'Keluar/Tinggalkan' pada pop-up konfirmasi...")
                 leave_btn.click()
                 time.sleep(5)
 
             # 12. Klik floating button (+) lagi, pilih Reject
-            if not click_floating_button_and_wait(new_page, ["text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
+            if not click_floating_button_and_wait(new_page, ["span.fab-label:has-text('Reject') >> visible=true", "span.fab-label:has-text('Tolak') >> visible=true", "text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
                 raise Exception("Gagal mengeklik floating button (+) di halaman preview")
             time.sleep(1)
 
-            print("[INFO] Memilih menu 'Reject'...")
-            reject_btn = new_page.locator("text=Reject >> visible=true").first
-            if reject_btn.count() == 0:
-                reject_btn = new_page.locator("text=REJECT >> visible=true").first
-            if reject_btn.count() == 0:
-                reject_btn = new_page.locator("text=Tolak >> visible=true").first
+            print("[INFO] Mengeklik menu 'Reject'...")
+            reject_btn = new_page.locator("div.fab-item:has(span:has-text('Reject')) button, div.fab-item:has(span:has-text('Tolak')) button, text=Reject, text=REJECT, text=Tolak").first
             reject_btn.wait_for(state="visible", timeout=10000)
             reject_btn.click()
             time.sleep(2)
 
             # Pop-up konfirmasi reject
             print("[INFO] Membaca tombol konfirmasi Reject...")
-            confirm_reject_btn = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("text=KONFIRMASI").first
+            confirm_reject_btn = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("text=KONFIRMASI").first
             if confirm_reject_btn.count() == 0:
                 confirm_reject_btn = new_page.locator("text=KONFIRMASI").last
 
@@ -552,6 +550,19 @@ def run_automation():
             
         except Exception as e:
             print(f"[ERROR] Rangkaian otomatisasi terhenti karena: {e}")
+            try:
+                if new_page:
+                    with open("error_dump.html", "w", encoding="utf-8") as f:
+                        f.write(new_page.content())
+                    new_page.screenshot(path="error_screen.png", full_page=True)
+                    print("[INFO] DOM dan Screenshot error berhasil disimpan.")
+                else:
+                    print("[INFO] Error terjadi sebelum halaman target terbuka, tidak ada DOM yang didump.")
+            except Exception as inner_e:
+                print(f"[ERROR] Gagal menyimpan dump: {inner_e}")
+            
+            print("[INFO] Menahan browser tetap terbuka selama 10 menit untuk debugging...")
+            time.sleep(600)
         finally:
             print("[INFO] Menutup browser...")
             try:

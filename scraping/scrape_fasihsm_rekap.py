@@ -562,8 +562,8 @@ def run(auto_profile_idx=None):
         
         if not resume_mode:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-            output_filename = os.path.join(results_dir, f"{survey_name}_rekap_petugas_{target_role.lower()}_{timestamp}.csv")
-            output_filename = output_filename.replace(" ", "_")
+            filename_only = f"{survey_name}_rekap_petugas_{target_role.lower()}_{timestamp}.csv".replace(" ", "_")
+            output_filename = os.path.join(results_dir, filename_only)
         
         js_fetch_single = """
         async ([basePayload, pageIndex]) => {
