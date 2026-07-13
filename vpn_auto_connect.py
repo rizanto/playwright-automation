@@ -65,7 +65,7 @@ def start_forticlient():
         return False
 
 def trigger_forticlient_saml_login():
-    print("[INFO] Mengaktifkan FortiClient dan menekan tombol Connect...")
+    print("[INFO] Mengaktifkan FortiClient dan mencari tombol Connect via UI Automation...")
     fallback_script = """
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
@@ -87,78 +87,46 @@ def trigger_forticlient_saml_login():
     if ($process) {
         try {
             [Microsoft.VisualBasic.Interaction]::AppActivate($process.Id)
-            Start-Sleep -Seconds 2
+            Start-Sleep -Milliseconds 1500
             
             $root = [System.Windows.Automation.AutomationElement]::RootElement
             $fortiWin = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -match "FortiClient" } | Select-Object -First 1
             
             if ($fortiWin) {
-                Write-Output 'Mencoba mengeklik tombol Connect menggunakan klik koordinat fisik...'
+                Write-Output 'Mencari tombol Connect secara programatik (UIA)...'
+                try {
+                    $fortiWin.SetFocus()
+                } catch {
+                    Write-Output "WARN: Jendela utama tidak bisa menerima SetFocus, melanjutkan..."
+                }
+                Start-Sleep -Milliseconds 500
                 
-                # Load API mouse_event, SetCursorPos, ShowWindow, dan SetWindowPos dari user32.dll
-                $mouseCode = @"
-                using System;
-                using System.Runtime.InteropServices;
-                public class Win32Mouse {
-                    [DllImport("user32.dll")]
-                    public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo);
-                    
-                    [DllImport("user32.dll")]
-                    public static extern bool SetCursorPos(int X, int Y);
-                    
-                    [DllImport("user32.dll")]
-                    public static extern bool GetCursorPos(out POINT lpPoint);
-                    
-                    [DllImport("user32.dll")]
-                    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-                    
-                    [DllImport("user32.dll")]
-                    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-                    
-                    [StructLayout(LayoutKind.Sequential)]
-                    public struct POINT {
-                        public int X;
-                        public int Y;
+                $buttonCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+                $buttons = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCond)
+                
+                $connectBtn = $buttons | Where-Object { $_.Current.Name -match "(?i)Connect|SAML Login" } | Select-Object -First 1
+                
+                if ($connectBtn) {
+                    Write-Output "Ditemukan tombol: $($connectBtn.Current.Name). Mencoba InvokePattern..."
+                    try {
+                        $invokePattern = $connectBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern) -as [System.Windows.Automation.InvokePattern]
+                        if ($null -eq $invokePattern) { throw "No InvokePattern" }
+                        $invokePattern.Invoke()
+                        Write-Output "SUKSES: Tombol diklik secara native via InvokePattern."
+                    } catch {
+                        Write-Output "WARN: InvokePattern tidak didukung. Mengirim tombol ENTER ke jendela utama."
+                        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
                     }
-                    
-                    public const int SW_RESTORE = 9;
-                    public const uint SWP_SHOWWINDOW = 0x0040;
-                    public const int MOUSEEVENTF_LEFTDOWN = 0x02;
-                    public const int MOUSEEVENTF_LEFTUP = 0x04;
-                }
-"@
-                Add-Type -TypeDefinition $mouseCode -ErrorAction SilentlyContinue
-                
-                # Normalisasi jendela: kembalikan dari Maximize (jika ada) dan paksa ukuran ke 900x800 di posisi (100, 100)
-                # Menggunakan NativeWindowHandle dari UIA agar 100% tepat mengontrol jendela GUI yang aktif
-                $hwnd = [IntPtr]$fortiWin.Current.NativeWindowHandle
-                if ($hwnd -ne [IntPtr]::Zero) {
-                    Write-Output '[INFO] Menormalisasi ukuran jendela FortiClient ke 900x800...'
-                    [Win32Mouse]::ShowWindow($hwnd, [Win32Mouse]::SW_RESTORE)
+                } else {
+                    Write-Output "WARN: Tombol Connect tidak ditemukan di UIA tree. Memulai navigasi keyboard (TAB 6x lalu ENTER)..."
+                    for ($i=1; $i -le 6; $i++) {
+                        [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+                        Start-Sleep -Milliseconds 150
+                    }
                     Start-Sleep -Milliseconds 200
-                    [Win32Mouse]::SetWindowPos($hwnd, [IntPtr]::Zero, 100, 100, 900, 800, [Win32Mouse]::SWP_SHOWWINDOW)
-                    Start-Sleep -Milliseconds 300
+                    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+                    Write-Output "SUKSES: Navigasi keyboard (TAB 6x + ENTER) telah dieksekusi."
                 }
-                
-                # Karena jendela sudah dipaksa ke (100,100) dengan ukuran 900x800,
-                # letak tombol Connect akan selalu berada di posisi statis yang sangat akurat ini:
-                $clickX = 550
-                $clickY = 720
-                
-                # Simpan posisi mouse user saat ini menggunakan GetCursorPos (piksel fisik)
-                $oldPos = New-Object Win32Mouse+POINT
-                [Win32Mouse]::GetCursorPos([ref]$oldPos)
-                
-                # Pindahkan kursor menggunakan SetCursorPos (piksel fisik), klik, lalu kembalikan kursor user
-                [Win32Mouse]::SetCursorPos($clickX, $clickY)
-                Start-Sleep -Milliseconds 150
-                [Win32Mouse]::mouse_event(0x02, 0, 0, 0, 0) # Left Down
-                Start-Sleep -Milliseconds 100
-                [Win32Mouse]::mouse_event(0x04, 0, 0, 0, 0) # Left Up
-                Start-Sleep -Milliseconds 150
-                [Win32Mouse]::SetCursorPos($oldPos.X, $oldPos.Y)
-                
-                Write-Output "SUKSES: Tombol Connect diklik secara koordinat fisik di ($clickX, $clickY)."
             } else {
                 Write-Output 'ERROR: Jendela UIA FortiClient tidak terdeteksi.'
             }
@@ -191,13 +159,13 @@ def handle_embedded_login_popup(username, password):
         $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
         
         # Cari jendela SSO
-        $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
+        $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
         
         if (-not $loginWin) {{
             $fortiWin = $allWindows | Where-Object {{ $_.Current.Name -like "*FortiClient*" }} | Select-Object -First 1
             if ($fortiWin) {{
                 $descendants = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-                $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
+                $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
             }}
         }}
         
@@ -206,16 +174,45 @@ def handle_embedded_login_popup(username, password):
             $winTitle = $loginWin.Current.Name
             Write-Output "Jendela login terdeteksi: '$winTitle'"
             
-            # Waktu tunggu yang lebih lama agar halaman SSO web selesai dimuat dengan sempurna
-            Write-Output "Menunggu halaman SSO ter-load (10 detik)..."
-            Start-Sleep -Seconds 10
+            Write-Output "Memulai Smart Polling untuk menunggu halaman SSO ter-load sepenuhnya..."
+            $loadTimeout = 60 # Maksimal 30 detik (60 * 0.5s)
+            $loadElapsed = 0
+            $isLoaded = $false
+            $inputs = $null
             
-            # Coba cari edit box username jika terekspos ke UIA
             $editCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
-            $inputs = $loginWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCond)
+            $textCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+            
+            while ($loadElapsed -lt $loadTimeout) {{
+                $inputs = $loginWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCond)
+                if ($inputs -and $inputs.Count -ge 2) {{
+                    $isLoaded = $true
+                    $waitTime = $loadElapsed * 0.5
+                    Write-Output "Halaman siap! Form input terdeteksi dalam $waitTime detik."
+                    break
+                }}
+                
+                # Cek jika halaman tidak mengekspos Edit control, tapi mengekspos Text
+                $texts = $loginWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCond)
+                $hasLoginText = $texts | Where-Object {{ $_.Current.Name -match "(?i)Username|Password|SSO|Sign In|Masuk" }}
+                if ($hasLoginText -and $hasLoginText.Count -gt 0) {{
+                    Start-Sleep -Seconds 2 # Beri sedikit waktu untuk render
+                    $isLoaded = $true
+                    $waitTime = $loadElapsed * 0.5
+                    Write-Output "Halaman siap! Teks UI terdeteksi dalam $waitTime detik."
+                    break
+                }}
+                
+                Start-Sleep -Milliseconds 500
+                $loadElapsed++
+            }}
+            
+            if (-not $isLoaded) {{
+                Write-Output "WARN: Polling habis waktu. Memaksa eksekusi (Blind inject)..."
+            }}
             
             if ($inputs -and $inputs.Count -ge 2) {{
-                Write-Output "SUKSES: Form input web terekspos. Menulis langsung via ValuePattern."
+                Write-Output "SUKSES: Menulis kredensial langsung via UIA ValuePattern."
                 try {{
                     $userPattern = $inputs[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
                     $userPattern.SetValue("{username}")
@@ -233,14 +230,14 @@ def handle_embedded_login_popup(username, password):
             }}
             
             # Fallback agresif jika form web tidak terekspos ke API UIA native Windows
-            Write-Output "Menggunakan injeksi agresif SendKeys..."
+            Write-Output "Menggunakan injeksi agresif SendKeys (Fallback)..."
             [Microsoft.VisualBasic.Interaction]::AppActivate($loginWin.Current.ProcessId)
             Start-Sleep -Milliseconds 1000
             
             try {{
                 $loginWin.SetFocus()
             }} catch {{
-                Write-Output "WARN: SetFocus pada jendela utama gagal, melanjutkan..."
+                Write-Output "WARN: SetFocus pada jendela utama gagal."
             }}
             Start-Sleep -Milliseconds 500
             

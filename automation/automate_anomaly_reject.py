@@ -170,7 +170,7 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
                     box = el.bounding_box()
                     if box and box['x'] > 800 and box['y'] > 500:  # Harus di kuadran kanan bawah
                         fab_loc = el
-                        print(f"✅ Menemukan FAB dengan selector: {sel} pada koordinat x={box['x'] + box['width']/2}, y={box['y'] + box['height']/2}")
+                        print(f"[OK] Menemukan FAB dengan selector: {sel} pada koordinat x={box['x'] + box['width']/2}, y={box['y'] + box['height']/2}")
                         break
             if fab_loc:
                 break
@@ -201,7 +201,7 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
         time.sleep(2.5)
         for sel in indicator_selectors:
             if check_menu_item_visible_js(page_obj, sel):
-                print(f"✅ Indikator target '{sel}' terkonfirmasi aktif secara visual (opacity > 0.5). Menu berhasil dibuka!")
+                print(f"[OK] Indikator target '{sel}' terkonfirmasi aktif secara visual (opacity > 0.5). Menu berhasil dibuka!")
                 return True
         print("[WARN] Indikator menu belum muncul secara visual, mengulangi klik...")
         
@@ -256,16 +256,16 @@ def login_sso_tab(sso_tab, username, password):
         except Exception as e:
             print(f"[WARN] Gagal klik SSO BPS: {e}")
             
-    # Tunggu redirect ke sso.bps.go.id
-    time.sleep(3)
-    if "sso.bps.go.id" in sso_tab.url:
+    # Tunggu redirect ke sso.bps.go.id dengan batas 30 detik
+    try:
+        import re
+        sso_tab.wait_for_url(re.compile(r".*sso\.bps\.go\.id.*"), timeout=30000)
         print("[INFO] Mengisi kredensial SSO BPS pada Tab 1...")
-        try:
-            sso_tab.fill('input[name="username"]', username, timeout=10000)
-            sso_tab.fill('input[name="password"]', password, timeout=10000)
-            sso_tab.click('button[type="submit"], input[type="submit"]', timeout=10000)
-        except Exception as e:
-            print(f"[WARN] Pengisian kredensial SSO terlewati/gagal: {e}")
+        sso_tab.fill('input[name="username"]', username, timeout=10000)
+        sso_tab.fill('input[name="password"]', password, timeout=10000)
+        sso_tab.click('button[type="submit"], input[type="submit"]', timeout=10000)
+    except Exception as e:
+        print(f"[WARN] Pengisian kredensial SSO terlewati/gagal (mungkin sudah login atau koneksi lambat): {e}")
             
     # Tunggu redirect selesai ke dashboard fasih-sm
     print("[INFO] Menunggu redirect akhir ke dashboard Fasih-SM...")
@@ -384,7 +384,7 @@ def run_automation():
                 pass
             try:
                 new_page.locator("text=SENSUS EKONOMI 2026").first.wait_for(state="visible", timeout=60000)
-                print("✅ Konten halaman review terdeteksi sudah dimuat.")
+                print("[OK] Konten halaman review terdeteksi sudah dimuat.")
             except Exception as e:
                 print(f"[WARN] Timeout menunggu konten review: {e}")
             time.sleep(2)
@@ -402,11 +402,11 @@ def run_automation():
                 pass
             try:
                 new_page.locator("text=Mode Edit").first.wait_for(state="visible", timeout=30000)
-                print("✅ Halaman sudah dalam Mode Edit!")
+                print("[OK] Halaman sudah dalam Mode Edit!")
             except:
                 try:
                     new_page.locator("text=Kirim").first.wait_for(state="visible", timeout=15000)
-                    print("✅ Tombol Kirim terdeteksi. Halaman sudah dalam Mode Edit!")
+                    print("[OK] Tombol Kirim terdeteksi. Halaman sudah dalam Mode Edit!")
                 except Exception as e:
                     print(f"[WARN] Timeout menunggu konfirmasi Mode Edit: {e}")
             time.sleep(2)
@@ -428,7 +428,7 @@ def run_automation():
                     loc = new_page.locator(nav_sel)
                     if loc.count() > 0 and loc.first.is_visible():
                         catatan_loc = loc.first
-                        print(f"✅ Menemukan CATATAN dengan selektor: {nav_sel}")
+                        print(f"[OK] Menemukan CATATAN dengan selektor: {nav_sel}")
                         break
                 except:
                     pass
@@ -442,7 +442,7 @@ def run_automation():
                         box = el.bounding_box()
                         if box and box["x"] < 200:
                             catatan_loc = el
-                            print(f"✅ Menemukan CATATAN di sidebar (x={box['x']})")
+                            print(f"[OK] Menemukan CATATAN di sidebar (x={box['x']})")
                             break
             
             if catatan_loc:
@@ -453,7 +453,7 @@ def run_automation():
                     new_page.locator("text=Tampilkan Anomali Usaha dan Keluarga").wait_for(state="visible", timeout=15000)
                 except:
                     time.sleep(3)
-                print("✅ Konten CATATAN berhasil dimuat.")
+                print("[OK] Konten CATATAN berhasil dimuat.")
             else:
                 print("[WARN] Tidak menemukan CATATAN di sidebar, mencoba scroll ke bawah halaman...")
                 new_page.keyboard.press("End")
@@ -464,6 +464,12 @@ def run_automation():
             time.sleep(1)
 
             # 7. Check & uncheck "Anomali diselesaikan oleh admin"
+            try:
+                with open("catatan_dom.html", "w", encoding="utf-8") as f:
+                    f.write(new_page.content())
+                new_page.screenshot(path="catatan_screen.png", full_page=True)
+            except:
+                pass
             toggle_checkbox_by_label(new_page, "Anomali diselesaikan oleh admin", True)
             time.sleep(1.5)
             toggle_checkbox_by_label(new_page, "Anomali diselesaikan oleh admin", False)
@@ -472,54 +478,45 @@ def run_automation():
 
             # 8. Klik tombol KIRIM di kanan atas
             print("[INFO] Mengeklik tombol KIRIM...")
-            kirim_btn = new_page.locator("text=KIRIM").first
+            kirim_btn = new_page.locator("button:has-text('KIRIM'):visible").first
             if kirim_btn.count() == 0:
-                kirim_btn = new_page.locator("text=Kirim").first
+                kirim_btn = new_page.locator("button:has-text('Kirim'):visible").first
             kirim_btn.click()
             time.sleep(2)
 
             # 9. Klik KIRIM di pop-up konfirmasi pertama
-            print("[INFO] Konfirmasi pertama: Mengeklik KIRIM di modal...")
-            modal_kirim = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("text=KIRIM").first
-            if modal_kirim.count() == 0:
-                modal_kirim = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("text=Kirim").first
-            if modal_kirim.count() == 0:
-                modal_kirim = new_page.locator("text=KIRIM").last
-            modal_kirim.click()
-            time.sleep(2)
-
-            # 10. Klik KONFIRMASI di pop-up konfirmasi kedua
-            print("[INFO] Konfirmasi kedua: Membaca status tombol KONFIRMASI...")
-            confirm_btn = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("text=KONFIRMASI").first
-            if confirm_btn.count() == 0:
-                confirm_btn = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("text=Konfirmasi").first
-            if confirm_btn.count() == 0:
-                confirm_btn = new_page.locator("text=KONFIRSpecial").last  # Typo correction from confirming BPS modal
-            if confirm_btn.count() == 0:
-                confirm_btn = new_page.locator("text=KONFIRMASI").last
-
+            print("[INFO] Konfirmasi pertama: pop-up KIRIM...")
             if dry_run:
-                print("[DRY_RUN] Menghentikan klik KONFIRMASI kirim anomali agar assignment tidak hangus.")
-                new_page.keyboard.press("Escape")
+                print("[DRY_RUN] Membatalkan pengiriman dengan mengeklik 'Batal' pada modal KIRIM.")
+                batal_btn = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("button:has-text('Batal'):visible").first
+                if batal_btn.count() > 0:
+                    batal_btn.click()
+                else:
+                    new_page.keyboard.press("Escape")
                 time.sleep(2)
             else:
-                print("[LIVE] Mengeklik tombol KONFIRMASI...")
-                confirm_btn.click()
+                print("[LIVE] Mengeklik KIRIM di modal...")
+                modal_kirim = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
+                if modal_kirim.count() > 0:
+                    modal_kirim.click()
                 time.sleep(5)
 
             # 11. Klik tombol melayang kembali (panah/kembali) di kanan bawah
             print("[INFO] Kembali ke mode preview...")
-            if not click_floating_button_and_wait(new_page, ["text=TINGGALKAN >> visible=true", "text=Tinggalkan >> visible=true"]):
-                raise Exception("Gagal mengeklik floating button kembali")
+            back_fab = new_page.locator("button[title*='Kembali']:visible").first
+            if back_fab.count() > 0:
+                back_fab.click(force=True)
+            else:
+                new_page.locator("#fasih-fab-root button").first.click(force=True)
             time.sleep(2)
 
-            # Pop-up konfirmasi tinggalkan halaman
-            print("[INFO] Memilih 'TINGGALKAN' pada pop-up konfirmasi...")
-            tinggalkan_btn = new_page.locator("text=TINGGALKAN").first
-            if tinggalkan_btn.count() == 0:
-                tinggalkan_btn = new_page.locator("text=Tinggalkan").first
-            tinggalkan_btn.click()
-            time.sleep(5)
+            # Pop-up konfirmasi tinggalkan halaman (Discard changes)
+            print("[INFO] Mengecek pop-up konfirmasi tinggalkan halaman...")
+            leave_btn = new_page.locator("div[role='dialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan'), div[role='dialog'] button:has-text('Kembali')").first
+            if leave_btn.count() > 0:
+                print("[INFO] Memilih 'Keluar/Tinggalkan' pada pop-up konfirmasi...")
+                leave_btn.click()
+                time.sleep(5)
 
             # 12. Klik floating button (+) lagi, pilih Reject
             if not click_floating_button_and_wait(new_page, ["text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
