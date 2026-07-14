@@ -96,54 +96,6 @@ def launch_real_chrome(headless=False):
 
 
 
-def check_menu_item_visible_js(page_obj, selector):
-    """Mengecek apakah elemen indikator benar-benar visible secara fisik dan visual oleh user menggunakan JS."""
-    js_check = """
-    (sel) => {
-        const cleanSel = sel.replace('text=', '').replace(' >> visible=true', '').replace(/"/g, '').trim();
-        
-        function isElementTrulyVisible(el) {
-            if (!el) return false;
-            const rect = el.getBoundingClientRect();
-            // Cek jika ukuran elemen 0 atau posisinya off-screen
-            if (rect.width === 0 || rect.height === 0) return false;
-            if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth) {
-                return false;
-            }
-            
-            let parent = el;
-            while (parent) {
-                const style = window.getComputedStyle(parent);
-                if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) < 0.1) {
-                    return false;
-                }
-                if (style.transform && (style.transform.includes('matrix(0') || style.transform.includes('scale(0)'))) {
-                    return false;
-                }
-                const pRect = parent.getBoundingClientRect();
-                if (style.overflow === 'hidden' && (pRect.width === 0 || pRect.height === 0)) {
-                    return false;
-                }
-                parent = parent.parentElement;
-            }
-            return true;
-        }
-
-        const all = Array.from(document.querySelectorAll('*'));
-        const match = all.find(el => {
-            const text = el.textContent || '';
-            const matchesText = text.trim() === cleanSel || text.includes(cleanSel);
-            return matchesText && isElementTrulyVisible(el);
-        });
-        return match != null;
-    }
-    """
-    try:
-        return page_obj.evaluate(js_check, selector)
-    except Exception as e:
-        print(f"[WARN] Gagal cek visibilitas riil via JS: {e}")
-        return False
-
 def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6):
     """Mengeklik tombol melayang (+) dan memastikan menu/efek target muncul."""
     print("[INFO] Mencari floating button (+) di kanan bawah...")
@@ -198,13 +150,18 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
             except Exception as click_err:
                 print(f"[WARN] Klik biasa Playwright juga gagal: {click_err}")
         
-        # Tunggu transisi rendering
-        time.sleep(2.5)
+        # Tunggu transisi rendering secara perlahan menggunakan wait_for Playwright
         for sel in indicator_selectors:
-            if check_menu_item_visible_js(page_obj, sel):
-                print(f"[OK] Indikator target '{sel}' terkonfirmasi aktif secara visual (opacity > 0.5). Menu berhasil dibuka!")
+            try:
+                # wait_for secara otomatis menunggu hingga animasi/transisi selesai dan elemen benar-benar visibel
+                page_obj.locator(sel).first.wait_for(state="visible", timeout=3000)
+                print(f"[OK] Indikator target '{sel}' terkonfirmasi aktif secara visual. Menu berhasil dibuka!")
                 return True
+            except:
+                pass
+                
         print("[WARN] Indikator menu belum muncul secara visual, mengulangi klik...")
+        time.sleep(1) # Beri jeda sejenak sebelum mencoba toggle ulang
         
     return False
 
@@ -215,19 +172,34 @@ def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
         label_loc = page_obj.locator(f"text={label_text}").first
         label_loc.wait_for(state="visible", timeout=15000)
         
-        parent = label_loc.locator("xpath=..")
-        checkbox_input = parent.locator("input[type='checkbox']").first
+        container = label_loc.locator("xpath=ancestor::div[.//input[@type='checkbox'] or .//*[@role='switch']][1]")
+        if container.count() == 0:
+            print(f"[WARN] Tidak dapat menemukan checkbox di sekitar label '{label_text}'.")
+            return False
+            
+        checkbox_input = container.locator("input[type='checkbox'], [role='switch']").first
         
         is_checked = False
         if checkbox_input.count() > 0:
-            is_checked = checkbox_input.is_checked()
+            try:
+                is_checked = checkbox_input.is_checked()
+            except:
+                aria_checked = checkbox_input.get_attribute("aria-checked")
+                if aria_checked:
+                    is_checked = (aria_checked.lower() == "true")
         else:
-            class_attr = parent.get_attribute("class") or ""
+            class_attr = container.get_attribute("class") or ""
             is_checked = "checked" in class_attr
             
         if is_checked != target_state:
-            print(f"   -> Mengklik label untuk mengubah status.")
-            label_loc.click()
+            print(f"   -> Mengklik elemen switch untuk mengubah status.")
+            
+            # Coba cari elemen div visual yang biasa menjadi trigger click (Tailwind/Custom UI)
+            visual_switch = container.locator("div[class*='cursor-pointer'], div[id$='-control']").first
+            if visual_switch.count() > 0:
+                visual_switch.click(force=True)
+            else:
+                checkbox_input.click(force=True)
             time.sleep(1)
         else:
             print(f"   -> Status sudah sesuai.")
@@ -497,11 +469,23 @@ def run_automation():
                     new_page.keyboard.press("Escape")
                 time.sleep(2)
             else:
-                print("[LIVE] Mengeklik KIRIM di modal...")
-                modal_kirim = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
-                if modal_kirim.count() > 0:
-                    modal_kirim.click()
-                time.sleep(5)
+                # Tahap 1: Modal "Kirim"
+                print("[LIVE] Mengeklik KIRIM di modal pertama...")
+                modal_kirim1 = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
+                if modal_kirim1.count() > 0:
+                    modal_kirim1.click()
+                    time.sleep(2)
+                else:
+                    print("[WARN] Tombol Kirim pada pop-up pertama tidak ditemukan!")
+                
+                # Tahap 2: Modal "Konfirmasi Kirim"
+                print("[LIVE] Mengeklik KONFIRMASI di modal kedua...")
+                modal_kirim2 = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Konfirmasi'):visible, button:has-text('KONFIRMASI'):visible").first
+                if modal_kirim2.count() > 0:
+                    modal_kirim2.click()
+                    time.sleep(5)
+                else:
+                    print("[WARN] Tombol Konfirmasi pada pop-up kedua tidak ditemukan!")
 
             # 11. Klik tombol melayang kembali (panah/kembali) di kanan bawah
             print("[INFO] Kembali ke mode preview...")
@@ -521,12 +505,12 @@ def run_automation():
                 time.sleep(5)
 
             # 12. Klik floating button (+) lagi, pilih Reject
-            if not click_floating_button_and_wait(new_page, ["span.fab-label:has-text('Reject') >> visible=true", "span.fab-label:has-text('Tolak') >> visible=true", "text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
+            if not click_floating_button_and_wait(new_page, ["button[class*='bg-destructive'] >> visible=true", "span.fab-label:has-text('Reject') >> visible=true", "span.fab-label:has-text('Tolak') >> visible=true", "text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
                 raise Exception("Gagal mengeklik floating button (+) di halaman preview")
             time.sleep(1)
 
             print("[INFO] Mengeklik menu 'Reject'...")
-            reject_btn = new_page.locator("div.fab-item:has(span:has-text('Reject')) button, div.fab-item:has(span:has-text('Tolak')) button, text=Reject, text=REJECT, text=Tolak").first
+            reject_btn = new_page.locator("button[class*='bg-destructive'], div.fab-item:has(span:has-text('Reject')) button, div.fab-item:has(span:has-text('Tolak')) button, button:has-text('Reject'), button:has-text('REJECT'), button:has-text('Tolak')").first
             reject_btn.wait_for(state="visible", timeout=10000)
             reject_btn.click()
             time.sleep(2)

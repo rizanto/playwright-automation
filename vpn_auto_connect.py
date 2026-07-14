@@ -37,14 +37,17 @@ def load_vpn_credentials():
 
 def is_vpn_connected():
     """Memeriksa apakah VPN aktif dengan mencoba melakukan koneksi socket ke host internal BPS."""
-    try:
-        socket.setdefaulttimeout(2)
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(("fasih-sm.bps.go.id", 443))
-        s.close()
-        return True
-    except Exception:
-        return False
+    for attempt in range(2):
+        try:
+            socket.setdefaulttimeout(8)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(("fasih-sm.bps.go.id", 443))
+            s.close()
+            return True
+        except Exception:
+            import time
+            time.sleep(2)
+    return False
 
 def start_forticlient():
     """Membuka FortiClient secara bersih dengan membersihkan instance ganda agar tidak crash."""
@@ -118,14 +121,19 @@ def trigger_forticlient_saml_login():
                         [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
                     }
                 } else {
-                    Write-Output "WARN: Tombol Connect tidak ditemukan di UIA tree. Memulai navigasi keyboard (TAB 6x lalu ENTER)..."
-                    for ($i=1; $i -le 6; $i++) {
-                        [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
-                        Start-Sleep -Milliseconds 150
+                    $disconnectBtn = $buttons | Where-Object { $_.Current.Name -match "(?i)Disconnect" } | Select-Object -First 1
+                    if ($disconnectBtn) {
+                        Write-Output "INFO: VPN sudah terhubung (tombol Disconnect ditemukan). Tidak perlu ditekan."
+                    } else {
+                        Write-Output "WARN: Tombol Connect tidak ditemukan di UIA tree. Memulai navigasi keyboard (TAB 6x lalu ENTER)..."
+                        for ($i=1; $i -le 6; $i++) {
+                            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+                            Start-Sleep -Milliseconds 150
+                        }
+                        Start-Sleep -Milliseconds 200
+                        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+                        Write-Output "SUKSES: Navigasi keyboard (TAB 6x + ENTER) telah dieksekusi."
                     }
-                    Start-Sleep -Milliseconds 200
-                    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-                    Write-Output "SUKSES: Navigasi keyboard (TAB 6x + ENTER) telah dieksekusi."
                 }
             } else {
                 Write-Output 'ERROR: Jendela UIA FortiClient tidak terdeteksi.'
@@ -155,111 +163,80 @@ def handle_embedded_login_popup(username, password):
     
     $root = [System.Windows.Automation.AutomationElement]::RootElement
     
-    while (-not $found -and $elapsed -lt $timeout) {{
-        $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
-        
-        # Cari jendela SSO
-        $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
-        
-        if (-not $loginWin) {{
-            $fortiWin = $allWindows | Where-Object {{ $_.Current.Name -like "*FortiClient*" }} | Select-Object -First 1
-            if ($fortiWin) {{
-                $descendants = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-                $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
-            }}
-        }}
-        
-        if ($loginWin) {{
-            $found = $true
-            $winTitle = $loginWin.Current.Name
-            Write-Output "Jendela login terdeteksi: '$winTitle'"
+    try {{
+        while (-not $found -and $elapsed -lt $timeout) {{
+            $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
             
-            Write-Output "Memulai Smart Polling untuk menunggu halaman SSO ter-load sepenuhnya..."
-            $loadTimeout = 60 # Maksimal 30 detik (60 * 0.5s)
-            $loadElapsed = 0
-            $isLoaded = $false
-            $inputs = $null
+            $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
             
-            $editCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
-            $textCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
-            
-            while ($loadElapsed -lt $loadTimeout) {{
-                $inputs = $loginWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCond)
-                if ($inputs -and $inputs.Count -ge 2) {{
-                    $isLoaded = $true
-                    $waitTime = $loadElapsed * 0.5
-                    Write-Output "Halaman siap! Form input terdeteksi dalam $waitTime detik."
-                    break
+            if (-not $loginWin) {{
+                $fortiWin = $allWindows | Where-Object {{ $_.Current.Name -like "*FortiClient*" }} | Select-Object -First 1
+                if ($fortiWin) {{
+                    $descendants = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                    $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
                 }}
-                
-                # Cek jika halaman tidak mengekspos Edit control, tapi mengekspos Text
-                $texts = $loginWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textCond)
-                $hasLoginText = $texts | Where-Object {{ $_.Current.Name -match "(?i)Username|Password|SSO|Sign In|Masuk" }}
-                if ($hasLoginText -and $hasLoginText.Count -gt 0) {{
-                    Start-Sleep -Seconds 2 # Beri sedikit waktu untuk render
-                    $isLoaded = $true
-                    $waitTime = $loadElapsed * 0.5
-                    Write-Output "Halaman siap! Teks UI terdeteksi dalam $waitTime detik."
-                    break
-                }}
-                
-                Start-Sleep -Milliseconds 500
-                $loadElapsed++
             }}
-            
-            if (-not $isLoaded) {{
-                Write-Output "WARN: Polling habis waktu. Memaksa eksekusi (Blind inject)..."
-            }}
-            
-            if ($inputs -and $inputs.Count -ge 2) {{
-                Write-Output "SUKSES: Menulis kredensial langsung via UIA ValuePattern."
-                try {{
-                    $userPattern = $inputs[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
-                    $userPattern.SetValue("{username}")
-                    $passPattern = $inputs[1].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) -as [System.Windows.Automation.ValuePattern]
-                    $passPattern.SetValue("{password}")
+        
+            if ($loginWin) {{
+                $found = $true
+                $winTitle = $loginWin.Current.Name
+                Write-Output "Jendela login terdeteksi: '$winTitle'"
+                
+                Write-Output "Memulai Injeksi Agresif Berulang (Mencegah Telat & Terlalu Cepat)..."
+                
+                $maxRetries = 15 # 15 * 5 detik = 75 detik maksimal
+                $attempt = 0
+                
+                while ($loginWin -and $attempt -lt $maxRetries) {{
+                    $attempt++
+                    Write-Output "Percobaan Injeksi ke-$attempt..."
                     
-                    # Fokus password field dan enter
-                    $inputs[1].SetFocus()
+                    # Bawa jendela ke depan
+                    [Microsoft.VisualBasic.Interaction]::AppActivate($loginWin.Current.ProcessId)
+                    Start-Sleep -Milliseconds 800
+                    
+                    try {{
+                        $loginWin.SetFocus()
+                    }} catch {{}}
+                    Start-Sleep -Milliseconds 200
+                    
+                    # Hapus isi sebelumnya (jika ada), lalu ketik username & password
+                    [System.Windows.Forms.SendKeys]::SendWait("^{{a}}{{BACKSPACE}}")
                     Start-Sleep -Milliseconds 100
+                    [System.Windows.Forms.SendKeys]::SendWait("{username}")
+                    Start-Sleep -Milliseconds 200
+                    [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
+                    Start-Sleep -Milliseconds 200
+                    [System.Windows.Forms.SendKeys]::SendWait("{password}")
+                    Start-Sleep -Milliseconds 200
                     [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
-                    break
-                }} catch {{
-                    Write-Output "WARN: ValuePattern gagal, fallback ke SendKeys."
+                    
+                    # Tunggu 5 detik, beri waktu login terproses atau halaman termuat
+                    Start-Sleep -Seconds 5
+                    
+                    # Cek ulang apakah jendela SSO masih ada
+                    $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+                    $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" -and $_.Current.ProcessId -eq $loginWin.Current.ProcessId }} | Select-Object -First 1
+                    
+                    if (-not $loginWin) {{
+                        Write-Output "SUKSES: Jendela SSO tertutup! Login berhasil diproses."
+                        break
+                    }}
                 }}
+                
+                if ($loginWin) {{
+                    Write-Output "WARN: Gagal login setelah $maxRetries percobaan."
+                }}
+            }} else {{
+                Start-Sleep -Seconds 1
+                $elapsed++
             }}
-            
-            # Fallback agresif jika form web tidak terekspos ke API UIA native Windows
-            Write-Output "Menggunakan injeksi agresif SendKeys (Fallback)..."
-            [Microsoft.VisualBasic.Interaction]::AppActivate($loginWin.Current.ProcessId)
-            Start-Sleep -Milliseconds 1000
-            
-            try {{
-                $loginWin.SetFocus()
-            }} catch {{
-                Write-Output "WARN: SetFocus pada jendela utama gagal."
-            }}
-            Start-Sleep -Milliseconds 500
-            
-            # Tekan klik/enter untuk memastikan kotak username mendapat fokus
-            [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
-            Start-Sleep -Milliseconds 500
-            
-            [System.Windows.Forms.SendKeys]::SendWait("{username}")
-            Start-Sleep -Milliseconds 500
-            [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
-            Start-Sleep -Milliseconds 500
-            [System.Windows.Forms.SendKeys]::SendWait("{password}")
-            Start-Sleep -Milliseconds 500
-            [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
-            Write-Output "SUKSES: Form login disubmit via injeksi agresif."
-            break
         }}
-        Start-Sleep -Seconds 1
-        $elapsed++
-    }}
-    if (-not $found) {{
-        Write-Output "WARN: Jendela login SSO internal tidak terdeteksi dalam 25 detik."
+        if (-not $found) {{
+            Write-Output "WARN: Jendela login SSO tidak terdeteksi dalam $timeout detik."
+        }}
+    }} catch {{
+        Write-Output "ERROR: $_"
     }}
     """
     
