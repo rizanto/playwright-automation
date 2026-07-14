@@ -4,6 +4,20 @@ import time
 import socket
 import subprocess
 
+def load_vpn_config():
+    import configparser
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    vpn_config = os.path.join(current_dir, "automation", "vpn_config.txt")
+    
+    tab_count = 6 # Default
+    if os.path.exists(vpn_config):
+        cfg = configparser.ConfigParser()
+        cfg.read(vpn_config)
+        if "VPN" in cfg:
+            tab_count = int(cfg["VPN"].get("tab_count", 6))
+    
+    return tab_count
+
 def load_vpn_credentials():
     import configparser
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -67,8 +81,8 @@ def start_forticlient():
         print("[ERROR] FortiClient tidak ditemukan di Program Files.")
         return False
 
-def trigger_forticlient_saml_login():
-    print("[INFO] Mengaktifkan FortiClient dan mencari tombol Connect via UI Automation...")
+def trigger_forticlient_saml_login(tab_count=6):
+    print(f"[INFO] Mengaktifkan FortiClient dan mencari tombol Connect via UI Automation (Tab: {tab_count}x)...")
     fallback_script = """
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
@@ -125,14 +139,14 @@ def trigger_forticlient_saml_login():
                     if ($disconnectBtn) {
                         Write-Output "INFO: VPN sudah terhubung (tombol Disconnect ditemukan). Tidak perlu ditekan."
                     } else {
-                        Write-Output "WARN: Tombol Connect tidak ditemukan di UIA tree. Memulai navigasi keyboard (TAB 6x lalu ENTER)..."
-                        for ($i=1; $i -le 6; $i++) {
+                        Write-Output "WARN: Tombol Connect tidak ditemukan di UIA tree. Memulai navigasi keyboard (TAB %TAB_COUNT%x lalu ENTER)..."
+                        for ($i=1; $i -le %TAB_COUNT%; $i++) {
                             [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
                             Start-Sleep -Milliseconds 150
                         }
                         Start-Sleep -Milliseconds 200
                         [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-                        Write-Output "SUKSES: Navigasi keyboard (TAB 6x + ENTER) telah dieksekusi."
+                        Write-Output "SUKSES: Navigasi keyboard (TAB %TAB_COUNT%x + ENTER) telah dieksekusi."
                     }
                 }
             } else {
@@ -145,6 +159,8 @@ def trigger_forticlient_saml_login():
         Write-Output 'ERROR: Proses FortiClient tidak ditemukan.'
     }
     """
+    
+    fallback_script = fallback_script.replace("%TAB_COUNT%", str(tab_count))
     res = subprocess.run(["powershell", "-Command", fallback_script], capture_output=True, text=True)
     print(f"[WIN32 UIA] {res.stdout.strip()}")
 
@@ -265,8 +281,11 @@ def run_auto_vpn():
     if not start_forticlient():
         return
         
+    # 1.5 Baca konfigurasi khusus VPN
+    tab_count = load_vpn_config()
+    
     # 2. Picu tombol SAML Login
-    trigger_forticlient_saml_login()
+    trigger_forticlient_saml_login(tab_count)
     
     # 3. Tangani jendela login internal yang muncul
     handle_embedded_login_popup(username, password)

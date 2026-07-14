@@ -1,0 +1,5 @@
+[VPN]
+# Tentukan jumlah penekanan tombol TAB yang diperlukan untuk mencapai tombol 'SAML Login' di FortiClient.
+# PC yang berbeda mungkin memerlukan jumlah TAB yang berbeda.
+# Jika menggunakan layar standar BPS, umumnya bernilai 5 atau 6.
+tab_count=5
