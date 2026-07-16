@@ -75,7 +75,7 @@ def start_forticlient():
     if os.path.exists(forticlient_path):
         print("[INFO] Menjalankan FortiClient GUI baru...")
         subprocess.Popen([forticlient_path], cwd=r"C:\Program Files\Fortinet\FortiClient", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(6)  # Tunggu GUI FortiClient terbuka
+        time.sleep(12)  # Tunggu GUI FortiClient terbuka (diperlama untuk PC/Server lambat)
         return True
     else:
         print("[ERROR] FortiClient tidak ditemukan di Program Files.")
@@ -89,7 +89,7 @@ def trigger_forticlient_saml_login(tab_count=6):
     Add-Type -AssemblyName Microsoft.VisualBasic
     Add-Type -AssemblyName System.Windows.Forms
     
-    $timeout = 15
+    $timeout = 30
     $elapsed = 0
     $process = $null
     
@@ -168,91 +168,82 @@ def handle_embedded_login_popup(username, password):
     """Mendeteksi jendela pop-up login SSO internal FortiClient dan mengisi kredensial secara persisten."""
     print("[INFO] Menunggu kemunculan jendela login SSO internal BPS...")
     login_script = rf"""
-    Add-Type -AssemblyName UIAutomationClient
-    Add-Type -AssemblyName UIAutomationTypes
     Add-Type -AssemblyName Microsoft.VisualBasic
     Add-Type -AssemblyName System.Windows.Forms
     
-    $timeout = 25
+    $timeout = 45
     $elapsed = 0
     $found = $false
+    $targetTitle = ""
     
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    
-    try {{
-        while (-not $found -and $elapsed -lt $timeout) {{
-            $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
-            
-            $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
-            
-            if (-not $loginWin) {{
-                $fortiWin = $allWindows | Where-Object {{ $_.Current.Name -like "*FortiClient*" }} | Select-Object -First 1
-                if ($fortiWin) {{
-                    $descendants = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-                    $loginWin = $descendants | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" }} | Select-Object -First 1
+    while (-not $found -and $elapsed -lt $timeout) {{
+        try {{
+            [Microsoft.VisualBasic.Interaction]::AppActivate("FortiClient SAML")
+            $found = $true
+            $targetTitle = "FortiClient SAML"
+        }} catch {{
+            try {{
+                [Microsoft.VisualBasic.Interaction]::AppActivate("Single Sign-On")
+                $found = $true
+                $targetTitle = "Single Sign-On"
+            }} catch {{
+                if ($elapsed -gt 15) {{
+                    try {{
+                        [Microsoft.VisualBasic.Interaction]::AppActivate("FortiClient")
+                        $found = $true
+                        $targetTitle = "FortiClient"
+                        Write-Output "WARN: Beralih ke jendela utama (Fallback Agresif)..."
+                    }} catch {{ }}
                 }}
             }}
+        }}
         
-            if ($loginWin) {{
-                $found = $true
-                $winTitle = $loginWin.Current.Name
-                Write-Output "Jendela login terdeteksi: '$winTitle'"
+        if ($found) {{
+            Write-Output "Jendela '$targetTitle' langsung terdeteksi! Menembakkan kredensial..."
+            
+            $maxRetries = 10
+            for ($i=1; $i -le $maxRetries; $i++) {{
+                Write-Output "Percobaan injeksi ke-$i..."
+                try {{
+                    [Microsoft.VisualBasic.Interaction]::AppActivate($targetTitle)
+                }} catch {{}}
+                Start-Sleep -Milliseconds 800
                 
-                Write-Output "Memulai Injeksi Agresif Berulang (Mencegah Telat & Terlalu Cepat)..."
+                [System.Windows.Forms.SendKeys]::SendWait("^{{a}}{{BACKSPACE}}")
+                Start-Sleep -Milliseconds 100
+                [System.Windows.Forms.SendKeys]::SendWait("{username}")
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.SendKeys]::SendWait("{password}")
+                Start-Sleep -Milliseconds 200
+                [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
                 
-                $maxRetries = 15 # 15 * 5 detik = 75 detik maksimal
-                $attempt = 0
+                # Tunggu 5 detik
+                Start-Sleep -Seconds 5
                 
-                while ($loginWin -and $attempt -lt $maxRetries) {{
-                    $attempt++
-                    Write-Output "Percobaan Injeksi ke-$attempt..."
-                    
-                    # Bawa jendela ke depan
-                    [Microsoft.VisualBasic.Interaction]::AppActivate($loginWin.Current.ProcessId)
-                    Start-Sleep -Milliseconds 800
-                    
+                # Cek apakah jendela masih ada
+                if ($targetTitle -ne "FortiClient") {{
                     try {{
-                        $loginWin.SetFocus()
-                    }} catch {{}}
-                    Start-Sleep -Milliseconds 200
-                    
-                    # Hapus isi sebelumnya (jika ada), lalu ketik username & password
-                    [System.Windows.Forms.SendKeys]::SendWait("^{{a}}{{BACKSPACE}}")
-                    Start-Sleep -Milliseconds 100
-                    [System.Windows.Forms.SendKeys]::SendWait("{username}")
-                    Start-Sleep -Milliseconds 200
-                    [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}")
-                    Start-Sleep -Milliseconds 200
-                    [System.Windows.Forms.SendKeys]::SendWait("{password}")
-                    Start-Sleep -Milliseconds 200
-                    [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
-                    
-                    # Tunggu 5 detik, beri waktu login terproses atau halaman termuat
-                    Start-Sleep -Seconds 5
-                    
-                    # Cek ulang apakah jendela SSO masih ada
-                    $allWindows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
-                    $loginWin = $allWindows | Where-Object {{ $_.Current.Name -match "(?i)Single Sign-On BPS|FortiClient \(\d+\)|Masuk" -and $_.Current.ProcessId -eq $loginWin.Current.ProcessId }} | Select-Object -First 1
-                    
-                    if (-not $loginWin) {{
-                        Write-Output "SUKSES: Jendela SSO tertutup! Login berhasil diproses."
+                        [Microsoft.VisualBasic.Interaction]::AppActivate($targetTitle)
+                    }} catch {{
+                        Write-Output "SUKSES: Jendela tertutup! Asumsi login berhasil."
                         break
                     }}
+                }} else {{
+                    Write-Output "SUKSES: Injeksi ke jendela utama selesai. Melanjutkan..."
+                    break
                 }}
-                
-                if ($loginWin) {{
-                    Write-Output "WARN: Gagal login setelah $maxRetries percobaan."
-                }}
-            }} else {{
-                Start-Sleep -Seconds 1
-                $elapsed++
             }}
+            break
+        }} else {{
+            Start-Sleep -Seconds 1
+            $elapsed++
         }}
-        if (-not $found) {{
-            Write-Output "WARN: Jendela login SSO tidak terdeteksi dalam $timeout detik."
-        }}
-    }} catch {{
-        Write-Output "ERROR: $_"
+    }}
+    
+    if (-not $found) {{
+        Write-Output "WARN: Jendela login SSO tidak terdeteksi dalam $timeout detik."
     }}
     """
     
@@ -292,7 +283,7 @@ def run_auto_vpn():
     
     # 4. Tunggu deteksi koneksi VPN aktif
     print("[INFO] Memantau status koneksi VPN internal BPS...")
-    timeout_seconds = 45
+    timeout_seconds = 90
     start_time = time.time()
     connected = False
     

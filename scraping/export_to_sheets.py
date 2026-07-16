@@ -8,7 +8,9 @@ def main(auto_profile_idx=None, auto_csv_path=None):
     print("=== Fasih Scraping - Export to Google Sheets ===")
     
     # 1. Cek credentials.json
-    creds_file = "credentials.json"
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    creds_file = os.path.join(parent_dir, "credentials.json")
     if not os.path.exists(creds_file):
         print("\n[ERROR] File credentials.json tidak ditemukan!")
         print("\nLangkah-langkah mendapatkan credentials.json:")

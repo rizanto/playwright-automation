@@ -683,8 +683,9 @@ def run(auto_profile_idx=None):
             if not resume_mode:
                 writer.writerow([
                     "Email Petugas", "Total Assignment", "Nama SLS", 
-                    "OPEN", "SUBMITTED BY PENCACAH", "DRAFT", 
-                    "APPROVED BY PENGAWAS", "REJECTED BY PENGAWAS", "REVOKED BY PENGAWAS",
+                    "OPEN", "DRAFT", "SUBMITTED BY Pencacah",
+                    "REJECTED BY Pengawas", "APPROVED BY Pengawas", "REVOKED BY Pengawas",
+                    "REJECTED BY Admin Kabupaten", "EDITED BY Admin Kabupaten", "REVOKED BY Admin Kabupaten", "COMPLETED BY Admin Kabupaten",
                     "RAW_BODY_TEXT", "sync_time"
                 ])
                 
@@ -698,7 +699,7 @@ def run(auto_profile_idx=None):
                     sync_time_val = sync_time_str if total_sls_rows == 0 and not resume_mode else ""
                     writer.writerow([
                         email, total_assignment, "N/A", 
-                        0, 0, 0, 0, 0, 0, "", sync_time_val
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", sync_time_val
                     ])
                     total_sls_rows += 1
                 else:
@@ -707,11 +708,15 @@ def run(auto_profile_idx=None):
                         
                         stats = {
                             "OPEN": 0,
-                            "SUBMITTED BY PENCACAH": 0,
                             "DRAFT": 0,
-                            "APPROVED BY PENGAWAS": 0,
-                            "REJECTED BY PENGAWAS": 0,
-                            "REVOKED BY PENGAWAS": 0
+                            "SUBMITTED BY Pencacah": 0,
+                            "REJECTED BY Pengawas": 0,
+                            "REJECTED BY Admin Kabupaten": 0,
+                            "APPROVED BY Pengawas": 0,
+                            "REVOKED BY Pengawas": 0,
+                            "EDITED BY Admin Kabupaten": 0,
+                            "REVOKED BY Admin Kabupaten": 0,
+                            "COMPLETED BY Admin Kabupaten": 0
                         }
                         
                         for bd in region.get("statusBreakdown", []):
@@ -719,24 +724,33 @@ def run(auto_profile_idx=None):
                             count = bd.get("count", 0)
                             
                             if "OPEN" in status_name:
-                                stats["OPEN"] = count
-                            elif "SUBMITTED" in status_name or "PENCACAH" in status_name:
-                                stats["SUBMITTED BY PENCACAH"] = count
+                                stats["OPEN"] += count
                             elif "DRAFT" in status_name:
-                                stats["DRAFT"] = count
-                            elif "APPROVED" in status_name or "PENGAWAS" in status_name:
-                                if "APPROVED" in status_name:
-                                    stats["APPROVED BY PENGAWAS"] = count
-                                elif "REJECTED" in status_name:
-                                    stats["REJECTED BY PENGAWAS"] = count
-                                elif "REVOKED" in status_name:
-                                    stats["REVOKED BY PENGAWAS"] = count
+                                stats["DRAFT"] += count
+                            elif "SUBMITTED" in status_name:
+                                stats["SUBMITTED BY Pencacah"] += count
+                            elif "REJECTED" in status_name and "PENGAWAS" in status_name:
+                                stats["REJECTED BY Pengawas"] += count
+                            elif "REJECTED" in status_name and "ADMIN" in status_name:
+                                stats["REJECTED BY Admin Kabupaten"] += count
+                            elif "APPROVED" in status_name:
+                                stats["APPROVED BY Pengawas"] += count
+                            elif "REVOKED" in status_name:
+                                if "ADMIN" in status_name:
+                                    stats["REVOKED BY Admin Kabupaten"] += count
+                                else:
+                                    stats["REVOKED BY Pengawas"] += count
+                            elif "EDITED" in status_name and "ADMIN" in status_name:
+                                stats["EDITED BY Admin Kabupaten"] += count
+                            elif "COMPLETED" in status_name and "ADMIN" in status_name:
+                                stats["COMPLETED BY Admin Kabupaten"] += count
                             
                         sync_time_val = sync_time_str if total_sls_rows == 0 and not resume_mode else ""
                         writer.writerow([
                             email, total_assignment, sls_code,
-                            stats["OPEN"], stats["SUBMITTED BY PENCACAH"], stats["DRAFT"],
-                            stats["APPROVED BY PENGAWAS"], stats["REJECTED BY PENGAWAS"], stats["REVOKED BY PENGAWAS"],
+                            stats["OPEN"], stats["DRAFT"], stats["SUBMITTED BY Pencacah"],
+                            stats["REJECTED BY Pengawas"], stats["APPROVED BY Pengawas"], stats["REVOKED BY Pengawas"],
+                            stats["REJECTED BY Admin Kabupaten"], stats["EDITED BY Admin Kabupaten"], stats["REVOKED BY Admin Kabupaten"], stats["COMPLETED BY Admin Kabupaten"],
                             json.dumps(region), sync_time_val
                         ])
                         total_sls_rows += 1
