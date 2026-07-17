@@ -269,7 +269,20 @@ def login_sso_tab(sso_tab, username, password):
 
     """Mengakses halaman login SSO BPS pada Tab 1, mengisi kredensial, dan memastikan login sukses ke dashboard."""
     print("[INFO] Membuka halaman login SSO di Tab 1...")
-    sso_tab.goto("https://fasih-sm.bps.go.id/oauth_login.html", wait_until="domcontentloaded", timeout=60000)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            sso_tab.goto("https://fasih-sm.bps.go.id/oauth_login.html", wait_until="domcontentloaded", timeout=60000)
+            break
+        except Exception as e:
+            print(f"[WARN] Gagal memuat halaman login (Percobaan {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                return False
+            import vpn_auto_connect
+            if not vpn_auto_connect.is_vpn_connected():
+                print("[WARN] VPN terputus! Mencoba menyambungkan kembali...")
+                vpn_auto_connect.run_auto_vpn()
+            time.sleep(10)
     time.sleep(3)
     
     # Cek jika cookies lama langsung redirect ke dashboard BPS (sudah login)
@@ -322,7 +335,24 @@ def process_assignment(context, url, headless_mode, dry_run):
         if headless_mode:
             target_tab.set_viewport_size({"width": 1366, "height": 768})
 
-        target_tab.goto(url, wait_until="domcontentloaded", timeout=60000)
+        max_retries = 3
+        goto_success = False
+        for attempt in range(max_retries):
+            try:
+                target_tab.goto(url, wait_until="domcontentloaded", timeout=60000)
+                goto_success = True
+                break
+            except Exception as e:
+                print(f"[WARN] Gagal memuat halaman assignment (Percobaan {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    import vpn_auto_connect
+                    if not vpn_auto_connect.is_vpn_connected():
+                        print("[WARN] VPN terputus! Mencoba menyambungkan kembali...")
+                        vpn_auto_connect.run_auto_vpn()
+                    time.sleep(10)
+                    
+        if not goto_success:
+            return "ERROR_GOTO_FAILED"
         import time
         time.sleep(5)
         
