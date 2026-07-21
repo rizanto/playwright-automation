@@ -36,8 +36,8 @@ def check_page_state(page_obj):
             print("[WARN] Terdeteksi Error Halaman ('There\'s some error / Failed to fetch').")
             return "ERROR_FETCH"
             
-        # 3. Cek CAPTCHA
-        if "perilaku yang tidak wajar pada perangkat anda" in content_text or "What code is in the image" in content_text or "support ID is:" in content_text:
+        # 3. Cek CAPTCHA (yang bisa diselesaikan manual oleh user)
+        if "What code is in the image" in content_text or "support ID is:" in content_text or "perilaku yang tidak wajar pada perangkat anda" in content_text:
             print("\n" + "!"*70)
             print("[WARNING] TERDETEKSI CAPTCHA ANTI-BOT DARI SERVER BPS!")
             print("[WARNING] Otomatisasi dijeda sementara.")
@@ -60,6 +60,64 @@ def check_page_state(page_obj):
                     pass
                 time.sleep(5)
             print("[ERROR] Timeout menunggu penyelesaian CAPTCHA.")
+            return "ERROR_CAPTCHA_TIMEOUT"
+            
+        # 4. Cek Blokir Bot Detected (Biasanya cukup di-refresh/reload saja)
+        if ("koneksi anda sebagai bot" in content_text or 
+            "Bot Detected" in content_text or 
+            "BOT-" in content_text or 
+            "perilaku yang tidak wajar pada koneksi anda" in content_text):
+            print("\n" + "!"*70)
+            print("[WARNING] TERDETEKSI TAMPILAN BOT DETECTED DARI SERVER BPS!")
+            print("[WARNING] Mencoba melakukan penyegaran halaman (refresh) otomatis...")
+            print("!"*70 + "\n")
+            
+            # Coba refresh halaman otomatis (maksimal 2 kali)
+            for attempt_reload in range(2):
+                try:
+                    time.sleep(3)
+                    page_obj.reload(wait_until="domcontentloaded", timeout=20000)
+                    time.sleep(4)
+                    new_content = page_obj.content()
+                    if ("koneksi anda sebagai bot" not in new_content and 
+                        "Bot Detected" not in new_content and 
+                        "BOT-" not in new_content):
+                        print("[SUCCESS] Blokir Bot Detected berhasil dilewati melalui refresh otomatis!")
+                        return "CAPTCHA_SOLVED"
+                except Exception as reload_err:
+                    print(f"[WARN] Gagal menyegarkan halaman: {reload_err}")
+            
+            # Jika refresh otomatis 2x masih gagal, minta bantuan manual
+            print("\n" + "!"*70)
+            print("[WARNING] REFRESH OTOMATIS GAGAL MENEMBUS BLOKIR BOT!")
+            print("[ACTION] Silakan klik tombol [Kembali] atau lakukan refresh manual di Chrome Anda.")
+            print("!"*70 + "\n")
+            
+            import winsound
+            for _ in range(4):
+                winsound.Beep(1500, 400)
+                time.sleep(0.1)
+                
+            print("[INFO] Menunggu Anda melewati Bot Detection secara manual... (Timeout 5 menit)")
+            for _ in range(60): # 60 * 5 detik = 300 detik (5 menit)
+                try:
+                    current_text = page_obj.content()
+                    if ("koneksi anda sebagai bot" not in current_text and
+                        "Bot Detected" not in current_text and
+                        "BOT-" not in current_text):
+                        print("[INFO] Blokir Bot Detected berhasil dilewati! Melanjutkan otomatisasi...")
+                        time.sleep(2)
+                        return "CAPTCHA_SOLVED"
+                except:
+                    pass
+                
+                # Coba bantu refresh otomatis berkala setiap 30 detik
+                if _ > 0 and _ % 6 == 0:
+                    print("[INFO] Mencoba menyegarkan halaman kembali secara otomatis...")
+                    try: page_obj.reload(wait_until="domcontentloaded", timeout=20000)
+                    except: pass
+                time.sleep(5)
+            print("[ERROR] Timeout menunggu penyelesaian Bot Detected.")
             return "ERROR_CAPTCHA_TIMEOUT"
             
     except Exception as e:
@@ -232,7 +290,7 @@ def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
         container = label_loc.locator("xpath=ancestor::div[.//input[@type='checkbox'] or .//*[@role='switch']][1]")
         if container.count() == 0:
             print(f"[WARN] Tidak dapat menemukan checkbox di sekitar label '{label_text}'.")
-            return False
+            return False, False
             
         checkbox_input = container.locator("input[type='checkbox'], [role='switch']").first
         
@@ -260,10 +318,10 @@ def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
             time.sleep(1)
         else:
             print(f"   -> Status sudah sesuai.")
-        return True
+        return True, is_checked
     except Exception as e:
         print(f"[WARN] Gagal menyetel checkbox '{label_text}': {e}")
-        return False
+        return False, False
 
 def login_sso_tab(sso_tab, username, password):
 
@@ -290,37 +348,55 @@ def login_sso_tab(sso_tab, username, password):
         print("[SUCCESS] Sesi login terdetect masih aktif secara otomatis pada Tab 1.")
         return True
         
-    print("[INFO] Sesi login kosong. Melakukan login SSO BPS...")
-    # Klik tombol Login SSO BPS
-    try:
-        btn = sso_tab.locator("text=SSO BPS").first
-        if btn.count() > 0:
-            btn.click(force=True, timeout=5000)
+    print("[INFO] Sesi login kosong. Memulai state machine login...")
+    
+    # State machine login (Maksimal 5 siklus percobaan)
+    for attempt in range(5):
+        current_url = sso_tab.url
+        
+        # 1. Jika sudah di dashboard
+        if "fasih-sm.bps.go.id" in current_url and "oauth_login" not in current_url and "sso.bps" not in current_url:
+            print("[SUCCESS] Login berhasil pada Tab 1.")
+            return True
+            
+        # 2. Jika berada di halaman awal pemilihan SSO
+        elif "oauth_login" in current_url:
+            print(f"[INFO] Siklus {attempt+1}: Mengeklik tombol Login SSO BPS...")
+            try:
+                # Cari elemen secara pasti menggunakan XPath yang aman dan tunggu sampai muncul
+                btn = sso_tab.locator("//a[contains(@class, 'login-button') or contains(@href, 'oauth2') or contains(text(), 'SSO BPS')]").first
+                btn.wait_for(state="visible", timeout=15000)
+                # Gunakan no_wait_after=True agar click langsung lepas dan FSM bisa bekerja
+                btn.click(force=True, no_wait_after=True)
+            except Exception as e:
+                print(f"[WARN] Gagal mengeklik tombol SSO: {e}")
+            # Tunggu lebih lama (12 detik) agar navigasi server SSO yang lambat tidak terpotong klik berikutnya
+            time.sleep(12)
+            
+        # 3. Jika berada di halaman form pengisian username/password SSO
+        elif "sso.bps.go.id" in current_url:
+            print(f"[INFO] Siklus {attempt+1}: Mengisi kredensial SSO BPS...")
+            try:
+                sso_tab.fill('input[name="username"]', username, timeout=10000)
+                sso_tab.fill('input[name="password"]', password, timeout=10000)
+                sso_tab.click('button[type="submit"], input[type="submit"]', no_wait_after=True, timeout=10000)
+            except Exception as e:
+                print(f"[WARN] Gagal mengisi form kredensial: {e}")
+            # Tunggu respons dari server lebih lama
+            time.sleep(10)
+            
         else:
-            sso_tab.click("//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sso bps')]", force=True, timeout=5000)
-    except Exception as e:
-        print(f"[WARN] Gagal klik SSO BPS (namun navigasi mungkin sudah berjalan): {e}")
+            print(f"[WARN] URL tidak dikenali dalam alur login: {current_url}. Menunggu...")
+            time.sleep(3)
             
-    # Tunggu redirect ke sso.bps.go.id dengan batas 45 detik
-    try:
-        import re
-        sso_tab.wait_for_url(re.compile(r".*sso\.bps\.go\.id.*"), timeout=45000)
-        print("[INFO] Mengisi kredensial SSO BPS pada Tab 1...")
-        sso_tab.fill('input[name="username"]', username, timeout=10000)
-        sso_tab.fill('input[name="password"]', password, timeout=10000)
-        sso_tab.click('button[type="submit"], input[type="submit"]', timeout=10000)
-    except Exception as e:
-        print(f"[WARN] Pengisian kredensial SSO terlewati/gagal (mungkin sudah login atau koneksi lambat): {e}")
-            
-    # Tunggu redirect selesai ke dashboard fasih-sm
-    print("[INFO] Menunggu redirect akhir ke dashboard Fasih-SM...")
-    try:
-        sso_tab.wait_for_url(lambda url: "fasih-sm.bps.go.id" in url and "oauth_login" not in url and "sso.bps" not in url, timeout=40000)
-        print("[SUCCESS] Login berhasil pada Tab 1.")
+    # Cek akhir satu kali lagi setelah loop selesai (siapa tahu redirect sukses persis di akhir loop)
+    final_url = sso_tab.url
+    if "fasih-sm.bps.go.id" in final_url and "oauth_login" not in final_url and "sso.bps" not in final_url:
+        print("[SUCCESS] Login berhasil pada Tab 1 (Terdeteksi di akhir alur).")
         return True
-    except Exception as e:
-        print(f"[ERROR] Gagal login SSO BPS pada Tab 1: {e}")
-        return False
+        
+    print("[ERROR] Gagal login SSO BPS pada Tab 1: Alur macet setelah 5 siklus percobaan.")
+    return False
 
 
 
@@ -372,19 +448,46 @@ def process_assignment(context, url, headless_mode, dry_run):
         except:
             page_text = target_tab.content().upper()
             
-        # Abaikan bagian "Riwayat Assignment" agar tidak membaca status masa lalu
-        if "RIWAYAT ASSIGNMENT" in page_text:
-            page_text = page_text.split("RIWAYAT ASSIGNMENT")[0]
+        import re
+        # Normalisasi semua spasi (termasuk enter, tab, dan non-breaking space \xA0) menjadi satu spasi biasa
+        page_text_normalized = re.sub(r'\s+', ' ', page_text)
             
-        # Validasi Ekstra Ketat: Hanya proses yang berstatus "Approved by pengawas" (di luar riwayat)
-        if "APPROVED BY PENGAWAS" not in page_text:
-            if "REJECTED BY" in page_text or "REJECTED" in page_text:
-                print("[INFO] Status saat ini sudah REJECTED. Melewati assignment ini (ALREADY_REJECTED).")
-                return "ALREADY_REJECTED"
-            else:
-                # Bisa jadi SUBMITTED BY Pencacah, DRAFT, dll
-                print("[INFO] Status saat ini BUKAN 'Approved by pengawas' (UNPROCESSABLE_STATUS). Melewati...")
-                return "UNPROCESSABLE_STATUS"
+        # Abaikan bagian "Riwayat Assignment" agar tidak membaca status masa lalu
+        if "RIWAYAT ASSIGNMENT" in page_text_normalized:
+            # Berjaga-jaga jika ternyata 'Riwayat' ter-render lebih dulu di DOM, kita cek seluruh teks, 
+            # tapi prioritas utama adalah mengecek bagian SEBELUM riwayat.
+            text_before_history = page_text_normalized.split("RIWAYAT ASSIGNMENT")[0]
+        else:
+            text_before_history = page_text_normalized
+            
+        # Validasi Ekstra Ketat: Cek apakah status "APPROVED BY Pengawas" ada di luar riwayat
+        if "APPROVED BY PENGAWAS" not in text_before_history:
+            # Fallback: Cari secara ketat HANYA di blok yang benar, JANGAN sampai nyasar ke Riwayat Assignment!
+            fallback_check = False
+            try:
+                # Cek 1: Apakah teks ada di 200 karakter pertama halaman (Area Header/Top Bar)
+                if "APPROVED BY PENGAWAS" in page_text_normalized[:200]:
+                    fallback_check = True
+                    
+                # Cek 2: Apakah teks ada persis di sebelah/di bawah label "STATUS ASSIGNMENT"
+                if not fallback_check:
+                    idx = page_text_normalized.find("STATUS ASSIGNMENT")
+                    if idx != -1:
+                        # Ambil cuplikan 100 karakter tepat setelah label tersebut
+                        status_snippet = page_text_normalized[idx:idx+100]
+                        if "APPROVED BY PENGAWAS" in status_snippet:
+                            fallback_check = True
+            except:
+                pass
+                
+            if not fallback_check:
+                if "REJECTED BY" in page_text_normalized or "REJECTED" in page_text_normalized:
+                    print("[INFO] Status saat ini sudah REJECTED. Melewati assignment ini (ALREADY_REJECTED).")
+                    return "ALREADY_REJECTED"
+                else:
+                    # Bisa jadi SUBMITTED BY Pencacah, DRAFT, dll
+                    print("[INFO] Status saat ini BUKAN 'Approved by pengawas' (UNPROCESSABLE_STATUS). Melewati...")
+                    return "UNPROCESSABLE_STATUS"
             
         print("[INFO] Menunggu tombol 'Review'...")
 
@@ -503,7 +606,12 @@ def process_assignment(context, url, headless_mode, dry_run):
             print("[ERROR] CATATAN sidebar tidak ditemukan. Membatalkan proses agar tidak merusak form.")
             return "ERROR_NO_SIDEBAR"
 
-        toggle_checkbox_by_label(new_page, "Tampilkan Anomali Usaha dan Keluarga", True)
+        success, was_active = toggle_checkbox_by_label(new_page, "Tampilkan Anomali Usaha dan Keluarga", True)
+        if success and was_active:
+            print("[INFO] 'Tampilkan Anomali Usaha dan Keluarga' sudah aktif sejak awal!")
+            print("[INFO] Ini menandakan assignment sudah pernah ditindaklanjuti/direject sebelumnya.")
+            return "ALREADY_PROCESSED"
+            
         time.sleep(1)
         toggle_checkbox_by_label(new_page, "Anomali diselesaikan oleh admin", True)
         time.sleep(1.5)
@@ -691,9 +799,9 @@ def run_automation():
             if not login_sso_tab(sso_tab, username, password):
                 raise Exception("Gagal login SSO BPS.")
 
-            for url in target_urls:
+            for idx_url, url in enumerate(target_urls):
                 status = process_assignment(context, url, headless_mode, dry_run)
-
+ 
                 # Cek jika butuh login ulang
                 if status == "ERROR_SESSION":
                     print("[WARN] Sesi terputus! Melakukan relogin...")
@@ -707,15 +815,22 @@ def run_automation():
                 if status in ["ERROR_CAPTCHA_INTERRUPT", "ERROR_SERVER_REJECT", "ERROR_SUBMIT_EDIT"]:
                     print(f"[WARN] Status {status}. Mencoba ulang URL ini 1 kali lagi...")
                     status = process_assignment(context, url, headless_mode, dry_run)
-
+ 
                 print(f"[RESULT] URL {url[-8:]} -> {status}")
-
+ 
                 # Tulis log
                 with open(log_file, "a", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow([datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), url, status])
+                
+                # Jeda manusiawi agar tidak memicu deteksi bot (6 sampai 12 detik acak)
+                if idx_url < len(target_urls) - 1:
+                    import random
+                    sleep_time = random.randint(6, 12)
+                    print(f"[INFO] Jeda manusiawi: Beristirahat {sleep_time} detik sebelum membuka URL berikutnya...")
+                    time.sleep(sleep_time)
 
-            print(f"\\n[SUCCESS] Seluruh URL selesai diproses. Laporan tersimpan di: {log_file}")
+            print(f"\n[SUCCESS] Seluruh URL selesai diproses. Laporan tersimpan di: {log_file}")
 
         except Exception as e:
             print(f"[ERROR] Automation terhenti mendadak: {e}")
