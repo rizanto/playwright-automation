@@ -105,8 +105,9 @@ def main(auto_profile_idx=None, auto_csv_path=None):
         print(f"[ERROR] Gagal membaca CSV: {e}")
         return
         
-    if not data:
-        print("[ERROR] File CSV kosong.")
+    if not data or len(data) < 2:
+        print(f"\n[ERROR] Ekspor dibatalkan! File CSV '{selected_csv}' tidak memiliki baris data (hanya header atau kosong, total {len(data) if data else 0} baris).")
+        print("[ERROR] Ekspor ke Google Sheets DIBATALKAN untuk mencegah hilangnya/rusaknya data sebelumnya di Google Sheets.")
         return
 
     # 4. Hubungkan ke Google Sheets
@@ -129,15 +130,16 @@ def main(auto_profile_idx=None, auto_csv_path=None):
         print(f"\n[ERROR] Gagal terhubung ke Google Sheets: {e}")
         return
         
-    # 5. Overwrite data
-    print(f"[INFO] Menimpa ulang (overwrite) data di tab '{sheet_tab}' dengan {len(data)} baris (termasuk header)...")
+    # 5. Overwrite data sebagai RAW text
+    clean_data = [[str(cell) if cell is not None else "" for cell in row] for row in data]
+    print(f"[INFO] Menimpa ulang (overwrite) data di tab '{sheet_tab}' dengan {len(clean_data)} baris (termasuk header) sebagai TEKS MURNI (RAW)...")
     try:
         worksheet.clear()
-        
-        # Update in batches if very large, but update() usually handles it
-        # However, passing a list of lists works perfectly for reasonable sizes
-        worksheet.update(data)
-        print("\n✅ SUKSES! Data berhasil diekspor ke Google Sheets.")
+        try:
+            worksheet.update(clean_data, value_input_option='RAW')
+        except TypeError:
+            worksheet.update(range_name=None, values=clean_data, value_input_option='RAW')
+        print("\n✅ SUKSES! Data berhasil diekspor ke Google Sheets dengan format TEKS MURNI (RAW).")
     except Exception as e:
         print(f"\n[ERROR] Gagal mengupdate data: {e}")
 

@@ -121,6 +121,21 @@ def trigger_forticlient_saml_login(tab_count=6):
                 $buttonCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
                 $buttons = $fortiWin.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCond)
                 
+                $disconnectBtn = $buttons | Where-Object { $_.Current.Name -match "(?i)Disconnect" } | Select-Object -First 1
+                if ($disconnectBtn) {
+                    Write-Output "INFO: Tombol Disconnect ditemukan! Mengeklik Disconnect untuk memutus sesi lama..."
+                    try {
+                        $invokePattern = $disconnectBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern) -as [System.Windows.Automation.InvokePattern]
+                        if ($null -eq $invokePattern) { throw "No InvokePattern" }
+                        $invokePattern.Invoke()
+                        Write-Output "SUKSES: Tombol Disconnect diklik via InvokePattern."
+                    } catch {
+                        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+                        Write-Output "SUKSES: Mengirim ENTER untuk Disconnect."
+                    }
+                    Start-Sleep -Seconds 6
+                }
+                
                 $connectBtn = $buttons | Where-Object { $_.Current.Name -match "(?i)Connect|SAML Login" } | Select-Object -First 1
                 
                 if ($connectBtn) {
@@ -135,19 +150,14 @@ def trigger_forticlient_saml_login(tab_count=6):
                         [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
                     }
                 } else {
-                    $disconnectBtn = $buttons | Where-Object { $_.Current.Name -match "(?i)Disconnect" } | Select-Object -First 1
-                    if ($disconnectBtn) {
-                        Write-Output "INFO: VPN sudah terhubung (tombol Disconnect ditemukan). Tidak perlu ditekan."
-                    } else {
-                        Write-Output "WARN: Tombol Connect tidak ditemukan di UIA tree. Memulai navigasi keyboard (TAB %TAB_COUNT%x lalu ENTER)..."
-                        for ($i=1; $i -le %TAB_COUNT%; $i++) {
-                            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
-                            Start-Sleep -Milliseconds 150
-                        }
-                        Start-Sleep -Milliseconds 200
-                        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-                        Write-Output "SUKSES: Navigasi keyboard (TAB %TAB_COUNT%x + ENTER) telah dieksekusi."
+                    Write-Output "WARN: Memulai navigasi keyboard (TAB %TAB_COUNT%x lalu ENTER)..."
+                    for ($i=1; $i -le %TAB_COUNT%; $i++) {
+                        [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+                        Start-Sleep -Milliseconds 150
                     }
+                    Start-Sleep -Milliseconds 200
+                    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+                    Write-Output "SUKSES: Navigasi keyboard (TAB %TAB_COUNT%x + ENTER) telah dieksekusi."
                 }
             } else {
                 Write-Output 'ERROR: Jendela UIA FortiClient tidak terdeteksi.'
@@ -257,14 +267,22 @@ def handle_embedded_login_popup(username, password):
     except Exception as e:
         print(f"[WARN] Gagal mengotomatiskan login SSO internal: {e}")
 
-def run_auto_vpn():
+def run_auto_vpn(force_reconnect=False):
     print("=== AUTO CONNECT BPS VPN (100% Hands-Free - Embedded) ===")
     
     # 0. Cek apakah VPN sudah tersambung sebelumnya
-    print("[INFO] Memeriksa status koneksi VPN saat ini...")
-    if is_vpn_connected():
-        print("[SUCCESS] VPN BPS sudah aktif/tersambung. Tidak perlu menghubungkan ulang.")
-        return
+    if not force_reconnect:
+        print("[INFO] Memeriksa status koneksi VPN saat ini...")
+        if is_vpn_connected():
+            print("[SUCCESS] VPN BPS sudah aktif/tersambung. Tidak perlu menghubungkan ulang.")
+            return
+    else:
+        print("[INFO] Mereset paksa koneksi VPN BPS untuk memperbarui Alamat IP...")
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", "FortiClient.exe"], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/IM", "FortiSSLVPN.exe"], capture_output=True)
+            time.sleep(3)
+        except: pass
         
     username, password = load_vpn_credentials()
         

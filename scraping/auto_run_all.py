@@ -15,6 +15,19 @@ import scrape_ksa_jagung
 import scrape_fasihdb_raw
 import vpn_auto_connect
 
+def is_valid_csv_with_data(csv_path):
+    """Memeriksa apakah file CSV ada, tidak kosong, dan memiliki setidaknya 1 baris data di luar header."""
+    if not csv_path or not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+        return False
+    try:
+        import csv
+        with open(csv_path, "r", encoding="utf-8", errors="ignore") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+            return len(rows) >= 2  # Minimal 1 header + 1 baris data
+    except:
+        return False
+
 def main():
     print("=== Auto Run All Kegiatan ===")
     config_file = os.path.join(current_dir, "config.txt")
@@ -94,8 +107,8 @@ def main():
                 print(f"\n--- Tahap 1: Scraping Data BPS Fasih ({section}) ---")
                 csv_filename = scrape_fasihsm_rekap.run(auto_profile_idx=idx)
                 
-                if not csv_filename or not os.path.exists(csv_filename):
-                    print(f"[WARN] Scraping gagal atau tidak menghasilkan file CSV untuk {section}. Melewati export...")
+                if not is_valid_csv_with_data(csv_filename):
+                    print(f"[WARN] Scraping gagal atau tidak menghasilkan data valid (0 baris data) untuk {section}. Melewati export ke Google Sheets untuk menjaga data sebelumnya...")
                     continue
                     
                 print(f"\n--- Tahap 2: Export ke Google Sheets ({section}) ---")

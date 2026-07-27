@@ -1,0 +1,13 @@
+[Automation]
+# Kredensial Akun BPS untuk Login SSO
+username = your_username_here
+password = your_password_here
+
+# URL Target Detail Assignment yang ingin ditindaklanjuti
+target_url = https://fasih-sm.bps.go.id/app/assignment-detail/YOUR_ASSIGNMENT_ID
+
+# Pengaman Uji Coba (True = Hanya simulasi, False = Kirim & Reject Nyata)
+dry_run = False
+
+# Menampilkan browser secara visual di layar (False = Tampil GUI, True = Berjalan di Background)
+headless = False

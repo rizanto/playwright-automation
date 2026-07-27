@@ -56,6 +56,11 @@ def load_config(auto_profile_idx=None):
 
 def export_to_google_sheet(data, sheet_url, sheet_tab_name):
     """Mengunggah data list of list ke Google Sheet target."""
+    if not data or len(data) < 2:
+        print(f"[ERROR] Ekspor ke Google Sheets DIBATALKAN! Data tidak memiliki baris data (hanya header atau kosong, total {len(data) if data else 0} baris).")
+        print("[ERROR] Mencegah perintah clear() agar data sebelumnya di Google Sheets TIDAK TERHAPUS/RUSAK.")
+        return False
+
     if not os.path.exists(CREDS_FILE):
         print(f"[ERROR] File {CREDS_FILE} tidak ditemukan. Pengunggahan ditunda.")
         return False
@@ -73,10 +78,14 @@ def export_to_google_sheet(data, sheet_url, sheet_tab_name):
             print(f"[INFO] Tab '{sheet_tab_name}' tidak ditemukan, membuat tab baru...")
             worksheet = sheet.add_worksheet(title=sheet_tab_name, rows="1000", cols="30")
             
-        print(f"[INFO] Menimpa data di sheet '{sheet_tab_name}' ({len(data)} baris)...")
+        clean_data = [[str(cell) if cell is not None else "" for cell in row] for row in data]
+        print(f"[INFO] Menimpa data di sheet '{sheet_tab_name}' ({len(clean_data)} baris) sebagai TEKS MURNI (RAW)...")
         worksheet.clear()
-        worksheet.update(data)
-        print("[OK] SUKSES! Data berhasil diupload ke Google Sheet.")
+        try:
+            worksheet.update(clean_data, value_input_option='RAW')
+        except TypeError:
+            worksheet.update(range_name=None, values=clean_data, value_input_option='RAW')
+        print("[OK] SUKSES! Data berhasil diupload ke Google Sheet dengan format TEKS MURNI (RAW).")
         return True
     except Exception as e:
         print(f"[ERROR] Gagal upload ke Google Sheet: {e}")

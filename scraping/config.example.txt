@@ -1,0 +1,33 @@
+[Sensus Ekonomi]
+type = scrape_fasihsm_rekap
+username = username.bps.anda
+password = password.bps.anda
+target_url = https://fasih-sm.bps.go.id/app/surveys/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy
+target_role = Pencacah
+sheet_url = https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxx/edit?usp=sharing
+sheet_tab_name = DB
+
+[KSA PADI]
+type = scrape_ksa_padi
+username = username.bps.anda
+password = password.bps.anda
+provinsi = Maluku Utara
+kabupaten = Halmahera Utara
+sheet_url = https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxx/edit?usp=sharing
+sheet_tab_name = ksa-padi
+
+[KSA JAGUNG]
+type = scrape_ksa_jagung
+username = username.bps.anda
+password = password.bps.anda
+sheet_url = https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxx/edit?usp=sharing
+sheet_tab_name = ksa-jagung
+
+[Ubinan 2026 Raw]
+type = scrape_fasihdb_raw
+username = username.bps.anda
+password = password.bps.anda
+target_url = https://fasih-dashboard.bps.go.id/superset/dashboard/ubinan26s/
+subround = 2
+sheet_url = https://docs.google.com/spreadsheets/d/xxxxxxxxxxxxxx/edit?usp=sharing
+sheet_tab_name = ubinan26-s2

@@ -1,4 +1,5 @@
 @echo off
-title Playwright Automation & Scraping Platform
+title Auto Run All Scraping Platform
 color 0B
-python "%~dp0autorun.py"
+python "%~dp0scraping\auto_run_all.py" %*
+pause

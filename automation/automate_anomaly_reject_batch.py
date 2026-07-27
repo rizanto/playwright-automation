@@ -14,33 +14,35 @@ import vpn_auto_connect
 
 def check_page_state(page_obj):
     """
-    Mengecek kondisi halaman secara global (Captcha, Sesi Habis, Error Fetch).
+    Mengecek kondisi halaman secara global (Bot Detected, Captcha, Sesi Habis, Error Fetch).
     Returns: "OK", "CAPTCHA_SOLVED", "ERROR_SESSION", "ERROR_FETCH", "ERROR_CAPTCHA_TIMEOUT"
     """
     import time
     try:
-        content_text = page_obj.content()
+        content_text = page_obj.content().lower()
         url = page_obj.url
         
-        if "oauth_login" in url or "sso.bps" in url or "Lanjutkan dengan SSO" in content_text or "Selamat Datang Kembali" in content_text:
-            print("[WARN] Terdeteksi Sesi Habis! Halaman ter-redirect ke Login SSO.")
-            return "ERROR_SESSION"
+        # 1. Cek Blokir Bot Detected (UTAMA: Harus dicek paling pertama sebelum mengecek URL!)
+        if ("bot detected" in content_text or "koneksi anda sebagai bot" in content_text or 
+            "perilaku yang tidak wajar pada koneksi anda" in content_text or
+            "perilaku yang tidak wajar pada perangkat anda" in content_text):
             
-        # 1.5 Cek Sesi Habis (Terlempar murni ke dashboard utama tanpa path assignment)
-        if url.endswith("/app/") or url.endswith("/app") or ("/app/" in url and "/assignment" not in url):
-            print("[WARN] Terlempar ke dashboard utama Fasih (Sesi / Token kemungkinan tidak valid atau API error).")
-            return "ERROR_SESSION"
+            print("\n" + "!"*70)
+            print("[WARNING] TERDETEKSI TAMPILAN BOT DETECTED DARI SERVER BPS!")
+            print("[ACTION] MENGALAMI BLOKIR BOT. HARAP UBAH VPN/IP DAN TEKAN ENTER UNTUK LANJUT.")
+            print("!"*70 + "\n")
             
-        # 2. Cek Error Fetch (Server BPS ngadat)
-        if "There's some error" in content_text or "Failed to fetch" in content_text:
-            print("[WARN] Terdeteksi Error Halaman ('There\'s some error / Failed to fetch').")
-            return "ERROR_FETCH"
+            import winsound
+            for _ in range(5):
+                winsound.Beep(2000, 500)
             
-        # 3. Cek CAPTCHA (yang bisa diselesaikan manual oleh user)
-        if "What code is in the image" in content_text or "support ID is:" in content_text or "perilaku yang tidak wajar pada perangkat anda" in content_text:
+            input("Press Enter to continue after changing IP/VPN...")
+            return "ERROR_BOT_DETECTED"
+
+        # 2. Cek CAPTCHA Gambar
+        if "what code is in the image" in content_text or "support id is:" in content_text:
             print("\n" + "!"*70)
             print("[WARNING] TERDETEKSI CAPTCHA ANTI-BOT DARI SERVER BPS!")
-            print("[WARNING] Otomatisasi dijeda sementara.")
             print("[ACTION] Silakan buka browser Chrome yang sedang berjalan, dan isi kode Captcha secara manual.")
             print("!"*70 + "\n")
             
@@ -50,7 +52,7 @@ def check_page_state(page_obj):
                 time.sleep(0.1)
                 
             print("[INFO] Menunggu Anda mensubmit CAPTCHA... (Timeout 5 menit)")
-            for _ in range(60): # 60 * 5 detik = 300 detik (5 menit)
+            for _ in range(60):
                 try:
                     if "What code is in the image" not in page_obj.content():
                         print("[INFO] CAPTCHA berhasil dilewati! Melanjutkan otomatisasi...")
@@ -61,64 +63,14 @@ def check_page_state(page_obj):
                 time.sleep(5)
             print("[ERROR] Timeout menunggu penyelesaian CAPTCHA.")
             return "ERROR_CAPTCHA_TIMEOUT"
+
+        if "oauth_login" in url or "sso.bps" in url or "Lanjutkan dengan SSO" in content_text or "Selamat Datang Kembali" in content_text:
+            print("[WARN] Terdeteksi Sesi Habis! Halaman ter-redirect ke Login SSO.")
+            return "ERROR_SESSION"
             
-        # 4. Cek Blokir Bot Detected (Biasanya cukup di-refresh/reload saja)
-        if ("koneksi anda sebagai bot" in content_text or 
-            "Bot Detected" in content_text or 
-            "BOT-" in content_text or 
-            "perilaku yang tidak wajar pada koneksi anda" in content_text):
-            print("\n" + "!"*70)
-            print("[WARNING] TERDETEKSI TAMPILAN BOT DETECTED DARI SERVER BPS!")
-            print("[WARNING] Mencoba melakukan penyegaran halaman (refresh) otomatis...")
-            print("!"*70 + "\n")
-            
-            # Coba refresh halaman otomatis (maksimal 2 kali)
-            for attempt_reload in range(2):
-                try:
-                    time.sleep(3)
-                    page_obj.reload(wait_until="domcontentloaded", timeout=20000)
-                    time.sleep(4)
-                    new_content = page_obj.content()
-                    if ("koneksi anda sebagai bot" not in new_content and 
-                        "Bot Detected" not in new_content and 
-                        "BOT-" not in new_content):
-                        print("[SUCCESS] Blokir Bot Detected berhasil dilewati melalui refresh otomatis!")
-                        return "CAPTCHA_SOLVED"
-                except Exception as reload_err:
-                    print(f"[WARN] Gagal menyegarkan halaman: {reload_err}")
-            
-            # Jika refresh otomatis 2x masih gagal, minta bantuan manual
-            print("\n" + "!"*70)
-            print("[WARNING] REFRESH OTOMATIS GAGAL MENEMBUS BLOKIR BOT!")
-            print("[ACTION] Silakan klik tombol [Kembali] atau lakukan refresh manual di Chrome Anda.")
-            print("!"*70 + "\n")
-            
-            import winsound
-            for _ in range(4):
-                winsound.Beep(1500, 400)
-                time.sleep(0.1)
-                
-            print("[INFO] Menunggu Anda melewati Bot Detection secara manual... (Timeout 5 menit)")
-            for _ in range(60): # 60 * 5 detik = 300 detik (5 menit)
-                try:
-                    current_text = page_obj.content()
-                    if ("koneksi anda sebagai bot" not in current_text and
-                        "Bot Detected" not in current_text and
-                        "BOT-" not in current_text):
-                        print("[INFO] Blokir Bot Detected berhasil dilewati! Melanjutkan otomatisasi...")
-                        time.sleep(2)
-                        return "CAPTCHA_SOLVED"
-                except:
-                    pass
-                
-                # Coba bantu refresh otomatis berkala setiap 30 detik
-                if _ > 0 and _ % 6 == 0:
-                    print("[INFO] Mencoba menyegarkan halaman kembali secara otomatis...")
-                    try: page_obj.reload(wait_until="domcontentloaded", timeout=20000)
-                    except: pass
-                time.sleep(5)
-            print("[ERROR] Timeout menunggu penyelesaian Bot Detected.")
-            return "ERROR_CAPTCHA_TIMEOUT"
+        if "There's some error" in content_text or "Failed to fetch" in content_text:
+            print("[WARN] Terdeteksi Error Halaman ('There\'s some error / Failed to fetch').")
+            return "ERROR_FETCH"
             
     except Exception as e:
         pass
@@ -144,14 +96,40 @@ def force_kill_cdp_chrome():
             try:
                 if proc.info['name'] and proc.info['name'].lower() == 'chrome.exe':
                     cmdline = proc.info['cmdline']
-                    if cmdline and any('--remote-debugging-port=9222' in arg for arg in cmdline):
+                    if cmdline and any('chrome_automation_profile' in str(arg) or 'chrome_persistent_user_profile' in str(arg) or '--remote-debugging-port' in str(arg) for arg in cmdline):
                         proc.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
     except:
         pass
+    time.sleep(1)
 
-def launch_real_chrome(headless=False):
+def wipe_chrome_profile_cookies():
+    """Membersihkan cache dan cookie terinfeksi dari profil otomasi (chrome_automation_profile)."""
+    user_data_dir = os.path.join(parent_dir, "chrome_automation_profile")
+    if os.path.exists(user_data_dir):
+        print(f"[INFO] Membersihkan cookie dan sesi terinfeksi dari {user_data_dir}...")
+        try:
+            import shutil
+            shutil.rmtree(user_data_dir, ignore_errors=True)
+            time.sleep(2)
+            os.makedirs(user_data_dir, exist_ok=True)
+            print("[SUCCESS] Profil otomasi berhasil dibersihkan (fresh session).")
+        except Exception as e:
+            print(f"[WARN] Gagal menghapus profil otomasi: {e}")
+
+def play_alert_sound():
+    """Memutar suara bip alarmperingatan untuk memanggil pengguna."""
+    try:
+        import winsound
+        for _ in range(5):
+            winsound.Beep(1000, 400)
+            time.sleep(0.1)
+    except:
+        print("\a\a\a\a\a")
+
+def launch_chrome_with_profile(headless=False):
+    """Membuka Google Chrome secara otomatis dengan remote debugging port 9222 dan profil terisolasi (C:\\ChromeAutomationProfile)."""
     chrome_paths = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -164,14 +142,13 @@ def launch_real_chrome(headless=False):
             break
     if not executable:
         print("[ERROR] Google Chrome asli tidak ditemukan di sistem Anda.")
-        return False
+        return None
         
-    user_data_dir = os.path.join(parent_dir, "chrome_debug_data")
-    if not os.path.exists(user_data_dir):
-        os.makedirs(user_data_dir)
-        
+    user_data_dir = r"C:\ChromeAutomationProfile"
+    os.makedirs(user_data_dir, exist_ok=True)
+    
     mode_text = "Headless" if headless else "GUI"
-    print(f"Membuka Chrome asli secara otomatis (Mode: {mode_text}) dari: {executable}")
+    print(f"[INFO] Meluncurkan Chrome otomatis (Mode: {mode_text}, Profile: {user_data_dir})...")
     
     args = [
         executable,
@@ -179,35 +156,102 @@ def launch_real_chrome(headless=False):
         f"--user-data-dir={user_data_dir}",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-blink-features=AutomationControlled",
         "--disable-infobars",
-        "--test-type",
         "--hide-crash-restore-bubble",
         "--disable-session-crashed-bubble",
         "--disable-crash-reporter"
     ]
     if headless:
         args.append("--headless=new")
-        args.append("--window-position=-2400,-2400") # Pindahkan jendela kosong di luar layar (Bug Chrome 129+ Windows)
-        args.append("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
     else:
         args.append("--start-maximized")
         
+    args.append("about:blank")
+    
+    proc = subprocess.Popen(args)
+    time.sleep(3)
+    return proc
+
+def connect_or_launch_chrome(p, headless=False):
+    """Menghubungkan ke Chrome di port 9222. Jika belum terbuka, luncurkan Chrome secara otomatis."""
     try:
-        # Gunakan STARTUPINFO dan flags agar tidak ada window konsol/terminal kosong di Windows
-        startupinfo = None
-        if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
+        browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        print("[SUCCESS] Berhasil terhubung ke Chrome yang sedang berjalan!")
+        return browser
+    except:
+        print("[INFO] Chrome di port 9222 belum aktif. Memulai peluncuran Chrome otomatis dengan profile C:\\ChromeAutomationProfile...")
+        force_kill_cdp_chrome()
+        proc = launch_chrome_with_profile(headless=headless)
+        if not proc:
+            raise Exception("Gagal meluncurkan peramban Chrome.")
+            
+        for attempt in range(10):
+            try:
+                browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                print("[SUCCESS] Berhasil meluncurkan dan terhubung ke Chrome!")
+                return browser
+            except:
+                time.sleep(1.5)
+        raise Exception("Gagal terhubung ke Chrome setelah peluncuran otomatis.")
+
+def apply_stealth_to_context(context):
+    """Menyuntikkan skrip siluman anti-deteksi bot ke seluruh tab/page untuk menghapus jejak CDC Playwright."""
+    try:
+        context.set_extra_http_headers({
+            "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"'
+        })
+    except: pass
+
+    stealth_js = """
+        // 1. Mask navigator.webdriver & automation flags
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        delete Object.getPrototypeOf(navigator).webdriver;
         
-        creation_flags = 0x08000000 if os.name == 'nt' else 0
-        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=creation_flags, startupinfo=startupinfo)
-        time.sleep(3)
-        return proc
-    except Exception as e:
-        print(f"[ERROR] Gagal membuka Chrome: {e}")
-        return False
+        // 2. Hapus seluruh jejak CDC/Playwright/Selenium di window & document
+        for (const prop in window) {
+            if (prop.match(/^cdc_/i) || prop.match(/^__playwright/i) || prop.match(/^__selenium/i)) {
+                try { delete window[prop]; } catch(e){}
+            }
+        }
+        for (const prop in document) {
+            if (prop.match(/^cdc_/i) || prop.match(/^__playwright/i) || prop.match(/^__selenium/i)) {
+                try { delete document[prop]; } catch(e){}
+            }
+        }
+        
+        // 3. Mask window.chrome & runtime
+        window.chrome = {
+            runtime: {
+                OnInstalledReason: { INSTALL: "install", UPDATE: "update", CHROME_UPDATE: "chrome_update", SHARED_MODULE_UPDATE: "shared_module_update" },
+                OnRestartRequiredReason: { APP_UPDATE: "app_update", OS_UPDATE: "os_update", PERIODIC: "periodic" },
+                PlatformArch: { ARM: "arm", ARM64: "arm64", MIPS: "mips", MIPS64: "mips64", X86_32: "x86-32", X86_64: "x86-64" },
+                PlatformNaclArch: { ARM: "arm", MIPS: "mips", MIPS64: "mips64", X86_32: "x86-32", X86_64: "x86-64" },
+                PlatformOs: { ANDROID: "android", CROS: "cros", LINUX: "linux", MAC: "mac", OPENBSD: "openbsd", WIN: "win" }
+            },
+            loadTimes: function() {},
+            csi: function() {},
+            app: {}
+        };
+        
+        // 4. Fake navigator.languages & plugins
+        Object.defineProperty(navigator, 'languages', { get: () => ['id-ID', 'id', 'en-US', 'en'] });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        
+        // 5. Mask permissions query
+        if (navigator.permissions && navigator.permissions.query) {
+            const origQuery = navigator.permissions.query;
+            navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                origQuery(parameters)
+            );
+        }
+    """
+    try:
+        context.add_init_script(stealth_js)
+    except: pass
 
 
 
@@ -278,6 +322,217 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
         print("[WARN] Indikator menu belum muncul secara visual, mengulangi klik...")
         time.sleep(1) # Beri jeda sejenak sebelum mencoba toggle ulang
         
+def check_switchbox_state(page_obj, label_text):
+    """Mengecek apakah switchbox dengan label tertentu aktif (ON/checked) atau mati (OFF/unchecked)."""
+    try:
+        label_loc = page_obj.locator(f"text={label_text}").first
+        if label_loc.count() > 0 and label_loc.is_visible():
+            container = label_loc.locator("xpath=ancestor::div[.//input[@type='checkbox'] or .//*[@role='switch'] or contains(@class, 'switch')][1]")
+            if container.count() > 0:
+                # Perbaikan syntax CSS: input[type='checkbox'] bukan input[@type='checkbox']
+                sw = container.locator("input[type='checkbox'], button[role='switch'], .ant-switch, [class*='switch']").first
+                if sw.count() > 0:
+                    is_checked = False
+                    try: is_checked = sw.is_checked()
+                    except: pass
+                    aria_checked = sw.get_attribute("aria-checked") == "true"
+                    cls = sw.get_attribute("class") or ""
+                    has_class_checked = "ant-switch-checked" in cls or "checked" in cls or "bg-primary" in cls or "bg-blue" in cls
+                    if is_checked or aria_checked or has_class_checked:
+                        return True
+    except Exception as e:
+        print(f"[WARN] Kendala cek status switchbox '{label_text}': {e}")
+    return False
+
+
+def has_unchecked_anomaly_in_sidebar(page_obj):
+    """Mengecek apakah ada bagian anomali di sidebar kiri yang belum tercentang (tidak memiliki icon centang hijau ✓)."""
+    try:
+        result = page_obj.evaluate("""() => {
+            const sidebar = document.querySelector('aside') || document.querySelector('[class*="sidebar"]') || document.querySelector('nav');
+            if (!sidebar) return { has_unchecked: true, detail: "Sidebar tidak ditemukan" };
+
+            // Ambil semua elemen teks judul di sidebar
+            const allLabels = Array.from(sidebar.querySelectorAll('h1, h2, h3, h4, h5, h6, span, div, p, a')).filter(el => {
+                const text = (el.innerText || '').trim();
+                return text.length > 3 && text.length < 60 && el.children.length <= 2;
+            });
+
+            let uncheckedItems = [];
+
+            for (let el of allLabels) {
+                const text = el.innerText.trim().toUpperCase();
+                if (text.includes('ANOMALI') || text.includes('BLOK') || text.includes('CATATAN') || text.includes('KETERANGAN')) {
+                    // Cari elemen baris terdekat untuk item ini saja (bukan seluruh sidebar)
+                    let row = el;
+                    while (row && row !== sidebar && row.parentElement !== sidebar) {
+                        const rect = row.getBoundingClientRect();
+                        if (rect.height < 120 && rect.height > 15) {
+                            break;
+                        }
+                        row = row.parentElement;
+                    }
+                    if (!row || row === sidebar) row = el.parentElement || el;
+
+                    // Periksa ikon centang hijau di dalam baris spesifik ini saja
+                    const svgs = Array.from(row.querySelectorAll('svg, i, path'));
+                    let hasCheck = false;
+
+                    for (let s of svgs) {
+                        const style = window.getComputedStyle(s);
+                        const stroke = (s.getAttribute('stroke') || '').toLowerCase();
+                        const fill = (s.getAttribute('fill') || '').toLowerCase();
+                        const color = (style.color || '').toLowerCase();
+                        const cls = (s.getAttribute('class') || '').toLowerCase();
+
+                        if (
+                            cls.includes('green') || cls.includes('emerald') || cls.includes('check') || cls.includes('success') ||
+                            stroke.includes('green') || stroke.includes('#22c55e') || stroke.includes('#10b981') || stroke.includes('#52c41a') ||
+                            fill.includes('green') || fill.includes('#22c55e') || fill.includes('#10b981') || fill.includes('#52c41a') ||
+                            color.includes('rgb(34, 197, 94)') || color.includes('rgb(16, 185, 129)') || color.includes('rgb(82, 196, 26)')
+                        ) {
+                            hasCheck = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasCheck) {
+                        uncheckedItems.push(text.split('\\n')[0]);
+                    }
+                }
+            }
+
+            if (uncheckedItems.length > 0) {
+                return {
+                    has_unchecked: true,
+                    detail: `Item tanpa centang hijau: ${uncheckedItems.join(', ')}`
+                };
+            }
+
+            return {
+                has_unchecked: false,
+                detail: "Semua section di sidebar terkonfirmasi tercentang hijau lengkap"
+            };
+        }""")
+
+        if result.get("has_unchecked", True):
+            print(f"[INFO] Terdeteksi anomali belum tercentang di sidebar ({result.get('detail', '')}). Diperlukan REJECT!")
+            return True
+        else:
+            print("[INFO] Seluruh anomali di sidebar terkonfirmasi sudah tercentang hijau (✓). Assignment ini aman, dilewati.")
+            return False
+
+    except Exception as e:
+        print(f"[WARN] Kendala evaluasi sidebar anomali: {e}. Mengasumsikan ada anomali untuk direject.")
+        return True
+
+def click_edit_fab_button(page_obj):
+    """Mencari dan mengeklik tombol Edit Assignment (lingkaran oranye dengan ikon pensil di float bar kanan)."""
+    print("[INFO] Mencari dan mengeklik tombol FAB 'Edit Assignment' (Oranye/Pensil)...")
+    
+    # 1. Selector spesifik untuk tombol Edit
+    selectors = [
+        "button[title*='Edit']",
+        "button[aria-label*='Edit']",
+        "a[title*='Edit']",
+        "button:has-text('Edit')",
+        "button.bg-orange-500",
+        "button[class*='orange']",
+        "button[class*='amber']",
+        "button[class*='warning']"
+    ]
+    
+    for sel in selectors:
+        try:
+            loc = page_obj.locator(sel)
+            for i in range(loc.count()):
+                el = loc.nth(i)
+                if el.is_visible():
+                    box = el.bounding_box()
+                    if box and box['x'] > 700:
+                        print(f"[OK] Menemukan tombol Edit FAB via selector '{sel}' di x={box['x']}")
+                        el.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                        return True
+        except:
+            pass
+
+    # 2. Cek semua tombol melayang di kuadran kanan layar (posisi paling bawah di float bar)
+    try:
+        right_btns = []
+        all_btns = page_obj.locator("button:visible, a:visible, div[role='button']:visible")
+        for i in range(all_btns.count()):
+            b = all_btns.nth(i)
+            box = b.bounding_box()
+            if box and box['x'] > 750 and box['y'] > 200:
+                right_btns.append((box['y'], b))
+        if right_btns:
+            right_btns.sort(key=lambda item: item[0], reverse=True)
+            print(f"[INFO] Fallback: Mengeklik tombol terbawah float bar kanan di y={right_btns[0][0]}")
+            right_btns[0][1].evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+            return True
+    except Exception as e:
+        print(f"[WARN] Kendala fallback klik Edit FAB: {e}")
+        
+    return False
+
+
+def click_reject_fab_button(page_obj):
+    """Mencari dan mengeklik tombol Reject (lingkaran merah dengan ikon X di float bar kanan)."""
+    print("[INFO] Mencari dan mengeklik tombol FAB 'Reject' (Merah/X)...")
+    
+    # 1. Selector spesifik untuk tombol Reject
+    selectors = [
+        "button[title*='Reject']",
+        "button[aria-label*='Reject']",
+        "button[title*='Tolak']",
+        "button:has-text('Reject')",
+        "button:has-text('Tolak')",
+        "button.bg-destructive",
+        "button.bg-red-500",
+        "button[class*='destructive']",
+        "button[class*='red']",
+        "button[class*='danger']"
+    ]
+    
+    for sel in selectors:
+        try:
+            loc = page_obj.locator(sel)
+            for i in range(loc.count()):
+                el = loc.nth(i)
+                if el.is_visible():
+                    box = el.bounding_box()
+                    if box and box['x'] > 700:
+                        print(f"[OK] Menemukan tombol Reject FAB via selector '{sel}' di x={box['x']}")
+                        el.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                        return True
+        except:
+            pass
+
+    # 2. Cek semua tombol melayang di kuadran kanan layar
+    try:
+        right_btns = []
+        all_btns = page_obj.locator("button:visible, a:visible, div[role='button']:visible")
+        for i in range(all_btns.count()):
+            b = all_btns.nth(i)
+            box = b.bounding_box()
+            if box and box['x'] > 750 and box['y'] > 200:
+                right_btns.append((box['y'], b))
+        if right_btns:
+            right_btns.sort(key=lambda item: item[0])
+            for y, btn in right_btns:
+                cls = (btn.get_attribute("class") or "").lower()
+                title = (btn.get_attribute("title") or "").lower()
+                if "red" in cls or "destructive" in cls or "danger" in cls or "reject" in title or "tolak" in title:
+                    print(f"[INFO] Fallback: Mengeklik tombol Reject berdasarkan class/title di y={y}")
+                    btn.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                    return True
+            if len(right_btns) >= 2:
+                print(f"[INFO] Fallback: Mengeklik tombol urutan ke-2 di float bar kanan (Reject) di y={right_btns[1][0]}")
+                right_btns[1][1].evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                return True
+    except Exception as e:
+        print(f"[WARN] Kendala fallback klik Reject FAB: {e}")
+        
     return False
 
 def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
@@ -323,103 +578,136 @@ def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
         print(f"[WARN] Gagal menyetel checkbox '{label_text}': {e}")
         return False, False
 
-def login_sso_tab(sso_tab, username, password):
-
-    """Mengakses halaman login SSO BPS pada Tab 1, mengisi kredensial, dan memastikan login sukses ke dashboard."""
-    print("[INFO] Membuka halaman login SSO di Tab 1...")
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            sso_tab.goto("https://fasih-sm.bps.go.id/oauth_login.html", wait_until="domcontentloaded", timeout=60000)
-            break
-        except Exception as e:
-            print(f"[WARN] Gagal memuat halaman login (Percobaan {attempt + 1}/{max_retries}): {e}")
-            if attempt == max_retries - 1:
-                return False
-            import vpn_auto_connect
-            if not vpn_auto_connect.is_vpn_connected():
-                print("[WARN] VPN terputus! Mencoba menyambungkan kembali...")
-                vpn_auto_connect.run_auto_vpn()
-            time.sleep(10)
-    time.sleep(3)
-    
-    # Cek jika cookies lama langsung redirect ke dashboard BPS (sudah login)
-    if "oauth_login" not in sso_tab.url and "sso.bps" not in sso_tab.url:
-        print("[SUCCESS] Sesi login terdetect masih aktif secara otomatis pada Tab 1.")
-        return True
-        
-    print("[INFO] Sesi login kosong. Memulai state machine login...")
-    
-    # State machine login (Maksimal 5 siklus percobaan)
-    for attempt in range(5):
-        current_url = sso_tab.url
-        
-        # 1. Jika sudah di dashboard
-        if "fasih-sm.bps.go.id" in current_url and "oauth_login" not in current_url and "sso.bps" not in current_url:
-            print("[SUCCESS] Login berhasil pada Tab 1.")
+def is_login_page(page_obj):
+    """Mengecek apakah halaman saat ini adalah halaman landing/form login SSO dengan memeriksa innerText rendered."""
+    try:
+        url = page_obj.url
+        if "oauth_login" in url or "sso.bps" in url or "authorization" in url:
             return True
             
-        # 2. Jika berada di halaman awal pemilihan SSO
-        elif "oauth_login" in current_url:
-            print(f"[INFO] Siklus {attempt+1}: Mengeklik tombol Login SSO BPS...")
+        try:
+            body_text = page_obj.evaluate("() => document.body ? document.body.innerText : ''")
+        except:
+            body_text = page_obj.content()
+            
+        if any(txt in body_text for txt in ["Selamat Datang Kembali", "Masuk ke akun Anda", "Lanjutkan dengan SSO", "Lanjutkan dengan SSO Eksternal"]):
+            return True
+        return False
+    except:
+        return False
+
+def login_sso_tab(sso_tab, username, password):
+    """Mengakses https://fasih-sm.bps.go.id/app, mengeklik 'Lanjutkan dengan SSO', mengisi kredensial di sso.bps.go.id, dan menunggu redirect ke dashboard."""
+    print("[INFO] Memeriksa status halaman login SSO di Tab 1...")
+    
+    current_url = sso_tab.url
+    if "fasih-sm.bps.go.id/app" not in current_url and "sso.bps" not in current_url:
+        print("[INFO] Membuka portal Fasih-SM BPS (https://fasih-sm.bps.go.id/app)...")
+        try:
+            sso_tab.goto("https://fasih-sm.bps.go.id/app", wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            print(f"[WARN] Gagal memuat portal Fasih-SM: {e}")
+            return False
+    
+    time.sleep(3)
+    
+    # Cek jika sudah login di dashboard (misal ada menu nav / aside / list survey)
+    if not is_login_page(sso_tab) and "fasih-sm.bps.go.id/app" in sso_tab.url:
+        print("[SUCCESS] Sesi login terdeteksi masih aktif di Dashboard Fasih-SM.")
+        return True
+
+    print("[INFO] Sesi login kosong. Memulai alur login SSO BPS via https://fasih-sm.bps.go.id/app...")
+    
+    for attempt in range(12):
+        curr_url = sso_tab.url
+        
+        # 1. Cek jika sudah di dashboard (bukan login page, dan di fasih-sm.bps.go.id/app)
+        if not is_login_page(sso_tab) and "fasih-sm.bps.go.id" in curr_url and "sso.bps" not in curr_url and "oauth" not in curr_url:
+            print("[SUCCESS] Login berhasil! Sudah berada di Dashboard Fasih-SM BPS.")
             try:
-                # Cari elemen secara pasti menggunakan XPath yang aman dan tunggu sampai muncul
-                btn = sso_tab.locator("//a[contains(@class, 'login-button') or contains(@href, 'oauth2') or contains(text(), 'SSO BPS')]").first
-                btn.wait_for(state="visible", timeout=15000)
-                # Gunakan no_wait_after=True agar click langsung lepas dan FSM bisa bekerja
-                btn.click(force=True, no_wait_after=True)
+                time.sleep(2)
+                close_btn = sso_tab.locator("button.ant-modal-close, .ant-modal-close-x, text=Jangan tampilkan lagi, button:has-text('Tutup')").first
+                if close_btn.count() > 0 and close_btn.is_visible():
+                    close_btn.click(force=True)
+            except: pass
+            return True
+
+        # Jika ada pesan Bot Detected
+        st = check_page_state(sso_tab)
+        if st == "ERROR_BOT_DETECTED":
+            print("[ERROR] Terdeteksi Bot Detected saat login SSO!")
+            return False
+
+        # 2. Jika di halaman landing SSO fasih-sm.bps.go.id/app (ada tombol Lanjutkan dengan SSO)
+        if "sso.bps.go.id" not in curr_url and is_login_page(sso_tab):
+            print(f"[INFO] Siklus {attempt+1}: Mencari dan mengeklik tombol 'Lanjutkan dengan SSO'...")
+            try:
+                btn = sso_tab.locator("xpath=//button[contains(., 'Lanjutkan dengan SSO') and not(contains(., 'Eksternal'))] | //a[contains(., 'Lanjutkan dengan SSO') and not(contains(., 'Eksternal'))] | //button[contains(., 'SSO')] | //a[contains(@href, 'oauth2')]").first
+                if btn.count() > 0 and btn.is_visible():
+                    print(f"[OK] Menemukan tombol SSO BPS ('{btn.inner_text().strip()}'). Mengeklik...")
+                    btn.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                    time.sleep(1)
+                    try:
+                        sso_tab.wait_for_url(lambda u: "sso.bps" in u or "oauth" in u, timeout=8000)
+                        print(f"[INFO] Ter-redirect ke URL login SSO: {sso_tab.url}")
+                    except:
+                        print("[INFO] Navigasi manual ke endpoint authorization...")
+                        sso_tab.goto("https://fasih-sm.bps.go.id/oauth2/authorization/ics", wait_until="domcontentloaded")
+                else:
+                    print("[INFO] Tombol SSO belum terlihat, menavigasi langsung ke endpoint authorization...")
+                    sso_tab.goto("https://fasih-sm.bps.go.id/oauth2/authorization/ics", wait_until="domcontentloaded")
             except Exception as e:
                 print(f"[WARN] Gagal mengeklik tombol SSO: {e}")
-            # Tunggu lebih lama (12 detik) agar navigasi server SSO yang lambat tidak terpotong klik berikutnya
-            time.sleep(12)
-            
-        # 3. Jika berada di halaman form pengisian username/password SSO
-        elif "sso.bps.go.id" in current_url:
-            print(f"[INFO] Siklus {attempt+1}: Mengisi kredensial SSO BPS...")
+            time.sleep(5)
+
+        # 3. Jika sudah ter-redirect ke sso.bps.go.id (form username/password)
+        elif "sso.bps.go.id" in curr_url:
+            print(f"[INFO] Siklus {attempt+1}: Di halaman login sso.bps.go.id. Mengisi kredensial username & password...")
             try:
-                sso_tab.fill('input[name="username"]', username, timeout=10000)
-                sso_tab.fill('input[name="password"]', password, timeout=10000)
-                sso_tab.click('button[type="submit"], input[type="submit"]', no_wait_after=True, timeout=10000)
+                if sso_tab.locator('input[name="username"]').is_visible():
+                    sso_tab.fill('input[name="username"]', username, timeout=5000)
+                    sso_tab.fill('input[name="password"]', password, timeout=5000)
+                    print("[INFO] Mengeklik tombol Log In / Submit SSO...")
+                    sso_tab.click('button[type="submit"], input[type="submit"], button:has-text("Log In"), button:has-text("Masuk")', no_wait_after=True, timeout=5000)
             except Exception as e:
-                print(f"[WARN] Gagal mengisi form kredensial: {e}")
-            # Tunggu respons dari server lebih lama
-            time.sleep(10)
+                print(f"[WARN] Kendala pengisian form SSO: {e}")
+            time.sleep(8)
             
-        else:
-            print(f"[WARN] URL tidak dikenali dalam alur login: {current_url}. Menunggu...")
-            time.sleep(3)
-            
-    # Cek akhir satu kali lagi setelah loop selesai (siapa tahu redirect sukses persis di akhir loop)
-    final_url = sso_tab.url
-    if "fasih-sm.bps.go.id" in final_url and "oauth_login" not in final_url and "sso.bps" not in final_url:
-        print("[SUCCESS] Login berhasil pada Tab 1 (Terdeteksi di akhir alur).")
+    time.sleep(3)
+    if not is_login_page(sso_tab) and "fasih-sm.bps.go.id" in sso_tab.url:
+        print("[SUCCESS] Login berhasil pada Tab 1!")
         return True
         
-    print("[ERROR] Gagal login SSO BPS pada Tab 1: Alur macet setelah 5 siklus percobaan.")
+    print(f"[ERROR] Gagal login SSO BPS: URL terakhir {sso_tab.url}")
     return False
-
-
-
 def process_assignment(context, url, headless_mode, dry_run):
-    print(f"\\n{'='*50}")
+    print(f"\n{'='*50}")
     print(f"[INFO] Memproses URL: {url}")
     print(f"{'='*50}")
     
-    target_tab = None
-    try:
-        target_tab = context.new_page()
-        if headless_mode:
-            target_tab.set_viewport_size({"width": 1366, "height": 768})
+    # Buka link baru di tab baru terlebih dahulu
+    old_pages = [p for p in context.pages]
+    main_tab = context.new_page()
+    if headless_mode:
+        main_tab.set_viewport_size({"width": 1366, "height": 768})
 
+    # Setelah tab baru terbuka, tutup tab lama
+    for p in old_pages:
+        try: p.close()
+        except: pass
+
+    review_tab = None
+    try:
+        # Step 1: Di Tab baru, buka halaman Assignment Detail
         max_retries = 3
         goto_success = False
         for attempt in range(max_retries):
             try:
-                target_tab.goto(url, wait_until="domcontentloaded", timeout=60000)
+                main_tab.goto(url, wait_until="domcontentloaded", timeout=60000)
                 goto_success = True
                 break
             except Exception as e:
-                print(f"[WARN] Gagal memuat halaman assignment (Percobaan {attempt + 1}/{max_retries}): {e}")
+                print(f"[WARN] Gagal memuat halaman assignment di Tab 1 (Percobaan {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     import vpn_auto_connect
                     if not vpn_auto_connect.is_vpn_connected():
@@ -429,163 +717,111 @@ def process_assignment(context, url, headless_mode, dry_run):
                     
         if not goto_success:
             return "ERROR_GOTO_FAILED"
-        import time
-        time.sleep(5)
-        
-        state1 = check_page_state(target_tab)
+
+        time.sleep(2)
+        state1 = check_page_state(main_tab)
         if state1 != "OK" and state1 != "CAPTCHA_SOLVED":
             return state1
             
-        print("[INFO] Menunggu detail assignment dimuat...")
+        print("[INFO] Tab 1: Menunggu konten assignment selesai dimuat...")
+        # Cek apakah spinner yang benar-benar visible di layar (kebal terhadap tag HTML statis ant-spin-spinning)
+        for _ in range(10):
+            try:
+                visible_spinner = main_tab.locator(".ant-spin-spinning:visible, text='Memuat Halaman...':visible")
+                if visible_spinner.count() > 0 and visible_spinner.first.is_visible():
+                    time.sleep(0.5)
+                else:
+                    break
+            except:
+                break
+
         try:
-            target_tab.locator("text=Informasi Assignment").first.wait_for(state="visible", timeout=15000)
-        except:
-            pass
+            main_tab.locator("text=Informasi Assignment, text=STATUS ASSIGNMENT, text=Approved by pengawas, text=REJECTED").first.wait_for(state="visible", timeout=10000)
+        except: pass
             
-        print("[INFO] Mengecek status assignment di halaman detail...")
+        print("[INFO] Tab 1: Mengecek status assignment di halaman detail...")
         try:
-            page_text = target_tab.evaluate("document.body.innerText").upper()
+            page_text = main_tab.evaluate("document.body.innerText").upper()
         except:
-            page_text = target_tab.content().upper()
+            page_text = main_tab.content().upper()
             
         import re
-        # Normalisasi semua spasi (termasuk enter, tab, dan non-breaking space \xA0) menjadi satu spasi biasa
         page_text_normalized = re.sub(r'\s+', ' ', page_text)
             
-        # Abaikan bagian "Riwayat Assignment" agar tidak membaca status masa lalu
         if "RIWAYAT ASSIGNMENT" in page_text_normalized:
-            # Berjaga-jaga jika ternyata 'Riwayat' ter-render lebih dulu di DOM, kita cek seluruh teks, 
-            # tapi prioritas utama adalah mengecek bagian SEBELUM riwayat.
             text_before_history = page_text_normalized.split("RIWAYAT ASSIGNMENT")[0]
         else:
             text_before_history = page_text_normalized
             
-        # Validasi Ekstra Ketat: Cek apakah status "APPROVED BY Pengawas" ada di luar riwayat
         if "APPROVED BY PENGAWAS" not in text_before_history:
-            # Fallback: Cari secara ketat HANYA di blok yang benar, JANGAN sampai nyasar ke Riwayat Assignment!
             fallback_check = False
             try:
-                # Cek 1: Apakah teks ada di 200 karakter pertama halaman (Area Header/Top Bar)
                 if "APPROVED BY PENGAWAS" in page_text_normalized[:200]:
                     fallback_check = True
-                    
-                # Cek 2: Apakah teks ada persis di sebelah/di bawah label "STATUS ASSIGNMENT"
                 if not fallback_check:
                     idx = page_text_normalized.find("STATUS ASSIGNMENT")
                     if idx != -1:
-                        # Ambil cuplikan 100 karakter tepat setelah label tersebut
                         status_snippet = page_text_normalized[idx:idx+100]
                         if "APPROVED BY PENGAWAS" in status_snippet:
                             fallback_check = True
-            except:
-                pass
+            except: pass
                 
             if not fallback_check:
                 if "REJECTED BY" in page_text_normalized or "REJECTED" in page_text_normalized:
                     print("[INFO] Status saat ini sudah REJECTED. Melewati assignment ini (ALREADY_REJECTED).")
                     return "ALREADY_REJECTED"
                 else:
-                    # Bisa jadi SUBMITTED BY Pencacah, DRAFT, dll
                     print("[INFO] Status saat ini BUKAN 'Approved by pengawas' (UNPROCESSABLE_STATUS). Melewati...")
                     return "UNPROCESSABLE_STATUS"
             
-        print("[INFO] Menunggu tombol 'Review'...")
+        print("[INFO] Tab 1: Menunggu tombol 'Review'...")
+        review_btn = main_tab.locator("text=Review").first
 
-        review_btn = target_tab.locator("text=Review").first
-
-        # Deteksi ALREADY_REJECTED
         try:
             review_btn.wait_for(state="visible", timeout=15000)
         except:
-            print("[WARN] Tombol Review tidak ditemukan. Mencari FAB di preview tab ini (siapa tau tidak ada halaman review)...")
-            # Coba cek apakah ada FAB (karena kalau sudah reject, FAB tidak ada)
-            fab_check = target_tab.locator("button.fab-button, .ant-float-btn, button:has(svg)").first
-            if fab_check.count() == 0:
-                print("[INFO] Tidak ada tombol Review dan tidak ada FAB. Assignment kemungkinan sudah ALREADY_REJECTED.")
-                return "ALREADY_REJECTED"
-            else:
-                print("[WARN] Tombol Review tidak ada, namun FAB ada? Ini di luar dugaan. Melanjutkan dengan asumsi Error.")
-                return "ERROR_REVIEW_BTN"
+            print("[WARN] Tombol Review tidak ditemukan di Tab 1. Assignment kemungkinan sudah ALREADY_REJECTED.")
+            return "ALREADY_REJECTED"
 
-        print("[INFO] Mengeklik tombol 'Review' dan menunggu tab baru terbuka...")
+        print("[INFO] Tab 1: Mengeklik tombol 'Review' untuk membuka Halaman Review di Tab 2...")
         with context.expect_page() as new_page_info:
             review_btn.click()
-        new_page = new_page_info.value
-        new_page.wait_for_load_state("domcontentloaded")
+        review_tab = new_page_info.value
+        review_tab.wait_for_load_state("domcontentloaded")
         if headless_mode:
-            new_page.set_viewport_size({"width": 1366, "height": 768})
-        preview_url = new_page.url
-        print(f"[SUCCESS] Tab baru berhasil dimuat. URL: {preview_url}")
+            review_tab.set_viewport_size({"width": 1366, "height": 768})
 
-        print("[INFO] Menunggu konten form preview selesai dimuat...")
-        # Polling untuk memastikannya form preview selesai dimuat secara penuh (ditandai dengan munculnya FAB)
-        for _ in range(12): # Tunggu maksimal 12 * 5 = 60 detik
-            state_preview = check_page_state(new_page)
+        print(f"[SUCCESS] Tab 2 (Review) berhasil dimuat. URL: {review_tab.url}")
+
+        print("[INFO] Tab 2: Menunggu konten form review selesai dimuat...")
+        for _ in range(10):
+            state_preview = check_page_state(review_tab)
             if state_preview != "OK" and state_preview != "CAPTCHA_SOLVED":
                 return state_preview
                 
             try:
-                fab_locs = new_page.locator("button.fab-button, .ant-float-btn-menu-trigger, .ant-float-btn, button:has(svg)")
-                is_fab_visible = False
-                for i in range(fab_locs.count()):
-                    if fab_locs.nth(i).is_visible():
-                        is_fab_visible = True
-                        break
-                
-                if is_fab_visible:
-                    print("[OK] FAB terdeteksi. Form Preview telah selesai dimuat.")
+                fab_locs = review_tab.locator("button.fab-button, .ant-float-btn-menu-trigger, .ant-float-btn, button:has(svg)")
+                if fab_locs.count() > 0 and fab_locs.first.is_visible():
+                    print("[OK] Tab 2: FAB terdeteksi. Form Review telah selesai dimuat.")
                     break
-            except:
-                pass
-            time.sleep(5)
+            except: pass
+            time.sleep(1)
         else:
-            print("[WARN] Timeout 60 detik menunggu form Preview. Asumsi halaman stuck atau ALREADY_REJECTED.")
-            new_page.close()
+            print("[WARN] Timeout menunggu form Review di Tab 2.")
             return "ERROR_TIMEOUT_PREVIEW"
-            
-        time.sleep(2)
 
-        edit_url = preview_url.rstrip("/") + "/edit"
-        print(f"[INFO] Navigasi langsung ke Mode Edit: {edit_url}")
-        new_page.goto(edit_url, wait_until="domcontentloaded", timeout=60000)
-        
-        print("[INFO] Menunggu konfirmasi Mode Edit dan memastikan tidak ada pesan error...")
-        # Polling untuk memastikannya tidak stuck di "Failed to fetch" atau loading selamanya
-        for _ in range(12): # Tunggu maksimal 12 * 5 = 60 detik
-            state_edit = check_page_state(new_page)
-            if state_edit != "OK" and state_edit != "CAPTCHA_SOLVED":
-                return state_edit
-                
-            try:
-                if new_page.locator("text=Mode Edit").count() > 0 and new_page.locator("text=Mode Edit").first.is_visible():
-                    print("[OK] Halaman sudah dalam Mode Edit!")
-                    break
-                # Atau alternatif jika tombol Kirim muncul
-                if new_page.locator("text=Kirim").count() > 0 and new_page.locator("text=Kirim").first.is_visible():
-                    print("[OK] Tombol Kirim terdeteksi. Halaman sudah dalam Mode Edit!")
-                    break
-            except:
-                pass
-            time.sleep(5)
-        else:
-            print("[ERROR] Timeout 60 detik menunggu Mode Edit dimuat (mungkin loading terus/stuck).")
-            return "ERROR_TIMEOUT_EDIT"
-            
-        time.sleep(2)
-
-        print("[INFO] Mencari dan mengeklik 'CATATAN' di sidebar kiri...")
+        print("[INFO] Tab 2: Membuka panel CATATAN di Halaman Review untuk inspeksi awal...")
         catatan_loc = None
         for nav_sel in ["nav >> text=CATATAN", "[class*='sidebar'] >> text=CATATAN", "aside >> text=CATATAN", "text=CATATAN"]:
             try:
-                loc = new_page.locator(nav_sel)
+                loc = review_tab.locator(nav_sel)
                 if loc.count() > 0 and loc.first.is_visible():
                     catatan_loc = loc.first
                     break
-            except:
-                pass
+            except: pass
 
         if not catatan_loc:
-            all_catatan = new_page.locator("text=CATATAN")
+            all_catatan = review_tab.locator("text=CATATAN")
             for i in range(all_catatan.count()):
                 el = all_catatan.nth(i)
                 if el.is_visible():
@@ -597,136 +833,153 @@ def process_assignment(context, url, headless_mode, dry_run):
         if catatan_loc:
             catatan_loc.click()
             time.sleep(2)
-            try:
-                new_page.locator("text=Tampilkan Anomali Usaha dan Keluarga").wait_for(state="visible", timeout=15000)
-            except:
-                print("[ERROR] Konten CATATAN tidak termuat setelah diklik.")
-                return "ERROR_TIMEOUT_CATATAN"
-        else:
-            print("[ERROR] CATATAN sidebar tidak ditemukan. Membatalkan proses agar tidak merusak form.")
-            return "ERROR_NO_SIDEBAR"
 
-        success, was_active = toggle_checkbox_by_label(new_page, "Tampilkan Anomali Usaha dan Keluarga", True)
-        if success and was_active:
-            print("[INFO] 'Tampilkan Anomali Usaha dan Keluarga' sudah aktif sejak awal!")
-            print("[INFO] Ini menandakan assignment sudah pernah ditindaklanjuti/direject sebelumnya.")
-            return "ALREADY_PROCESSED"
+        # Inspeksi status Switchbox di Tab 2 (Halaman Review)
+        is_switch_active = check_switchbox_state(review_tab, "Tampilkan Anomali Usaha dan Keluarga")
+        
+        if is_switch_active:
+            print("[INFO] Tab 2: Switchbox 'Tampilkan Anomali Usaha dan Keluarga' SUDAH AKTIF (ON) sejak awal di Halaman Review.")
+            print("[INFO] Tab 2: Memeriksa apakah ada anomali di sidebar yang belum tercentang (✓)...")
+            has_unresolved = has_unchecked_anomaly_in_sidebar(review_tab)
             
-        time.sleep(1)
-        toggle_checkbox_by_label(new_page, "Anomali diselesaikan oleh admin", True)
-        time.sleep(1.5)
-        toggle_checkbox_by_label(new_page, "Anomali diselesaikan oleh admin", False)
-        time.sleep(1)
-
-        print("[INFO] Mengeklik tombol KIRIM...")
-        kirim_btn = new_page.locator("button:has-text('KIRIM'):visible").first
-        if kirim_btn.count() == 0:
-            kirim_btn = new_page.locator("button:has-text('Kirim'):visible").first
-        if kirim_btn.count() > 0:
-            kirim_btn.click()
-        time.sleep(2)
-
-        print("[INFO] Konfirmasi pertama: pop-up KIRIM...")
-        if dry_run:
-            print("[DRY_RUN] Membatalkan pengiriman dengan mengeklik 'Batal' pada modal KIRIM.")
-            batal_btn = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("button:has-text('Batal'):visible").first
-            if batal_btn.count() > 0:
-                batal_btn.click()
+            if not has_unresolved:
+                print("[INFO] Tab 2: Seluruh anomali di sidebar telah tercentang lengkap (✓). Assignment ini sudah selesai diperbaiki, dilewati!")
+                try: review_tab.close()
+                except: pass
+                return "ALREADY_PROCESSED"
             else:
-                new_page.keyboard.press("Escape")
-            time.sleep(2)
+                print("[INFO] Tab 2: Terdeteksi anomali belum tercentang di sidebar. Melanjutkan proses Reject langsung dari Halaman Review...")
         else:
-            print("[LIVE] Mengeklik KIRIM di modal pertama...")
-            modal_kirim1 = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
+            print("[INFO] Tab 2: Switchbox 'Tampilkan Anomali Usaha dan Keluarga' MASIH MATI (OFF) di Halaman Review.")
+            print("[INFO] Tab 2: Mengaktifkan switchbox memerlukan Mode Edit. Membuka Mode Edit via FAB...")
+            
+            edit_clicked = click_edit_fab_button(review_tab)
+            if not edit_clicked:
+                print("[INFO] Tab 2: Fallback: Navigasi URL Mode Edit secara langsung...")
+                edit_url = review_tab.url.rstrip("/").replace("/edit", "") + "/edit"
+                review_tab.goto(edit_url, wait_until="domcontentloaded", timeout=60000)
+
+            print("[INFO] Tab 2: Menunggu Mode Edit dimuat...")
+            time.sleep(3)
+            
+            print("[INFO] Tab 2: Mencari dan mengeklik 'CATATAN' di sidebar kiri...")
+            catatan_edit = None
+            for nav_sel in ["nav >> text=CATATAN", "[class*='sidebar'] >> text=CATATAN", "aside >> text=CATATAN", "text=CATATAN"]:
+                try:
+                    loc = review_tab.locator(nav_sel)
+                    if loc.count() > 0 and loc.first.is_visible():
+                        catatan_edit = loc.first
+                        break
+                except: pass
+            if catatan_edit:
+                catatan_edit.click()
+                time.sleep(2)
+
+            print("[INFO] Tab 2: Mengaktifkan switchbox 'Tampilkan Anomali Usaha dan Keluarga' di Mode Edit...")
+            toggle_checkbox_by_label(review_tab, "Tampilkan Anomali Usaha dan Keluarga", True)
+            time.sleep(1)
+            toggle_checkbox_by_label(review_tab, "Anomali diselesaikan oleh admin", True)
+            time.sleep(1.5)
+            toggle_checkbox_by_label(review_tab, "Anomali diselesaikan oleh admin", False)
+            time.sleep(1)
+
+            print("[INFO] Tab 2: Mengeklik tombol KIRIM...")
+            kirim_btn = review_tab.locator("button:has-text('KIRIM'):visible, button:has-text('Kirim'):visible").first
+            if kirim_btn.count() > 0:
+                kirim_btn.click()
+            time.sleep(2)
+
+            print("[INFO] Tab 2: Konfirmasi modal KIRIM...")
+            modal_kirim1 = review_tab.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
             if modal_kirim1.count() > 0:
                 modal_kirim1.click()
                 time.sleep(2)
 
-            print("[LIVE] Mengeklik KONFIRMASI di modal kedua...")
-            modal_kirim2 = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Konfirmasi'):visible, button:has-text('KONFIRMASI'):visible").first
+            modal_kirim2 = review_tab.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Konfirmasi'):visible, button:has-text('KONFIRMASI'):visible").first
             if modal_kirim2.count() > 0:
                 modal_kirim2.click()
-                
-                print("[INFO] Menunggu notifikasi 'Assignment berhasil disubmit' dari server...")
-                try:
-                    new_page.locator("text=Assignment berhasil disubmit").first.wait_for(state="visible", timeout=15000)
-                    print("[OK] Notifikasi sukses disubmit muncul.")
-                except:
-                    print("[ERROR] Timeout/Gagal mendapatkan notifikasi sukses setelah submit Edit. Meminta ulangi...")
-                    return "ERROR_SUBMIT_EDIT"
+                time.sleep(2)
 
-        print("[INFO] Kembali ke mode preview...")
-        back_fab = new_page.locator("button[title*='Kembali']:visible").first
-        if back_fab.count() > 0:
-            back_fab.click(force=True)
-        else:
-            new_page.locator("#fasih-fab-root button").first.click(force=True)
-        time.sleep(2)
+            print("[INFO] Tab 2: Kembali ke Halaman Review pasca-Kirim...")
+            try:
+                back_fab = review_tab.locator("button[title*='Kembali']:visible").first
+                if back_fab.count() > 0:
+                    back_fab.click(force=True, timeout=5000)
+                else:
+                    review_tab.locator("#fasih-fab-root button").first.click(force=True, timeout=5000)
+                time.sleep(2)
+            except: pass
 
-        print("[INFO] Mengecek pop-up konfirmasi tinggalkan halaman...")
-        leave_btn = new_page.locator("div[role='dialog'] button:has-text('Keluar'), div[role='alertdialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan'), div[role='alertdialog'] button:has-text('Tinggalkan'), div[role='dialog'] button:has-text('Kembali')").first
-        if leave_btn.count() > 0:
-            leave_btn.click()
-            time.sleep(5)
+            leave_btn = review_tab.locator("div[role='dialog'] button:has-text('Keluar'), div[role='alertdialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan')").first
+            if leave_btn.count() > 0:
+                leave_btn.click()
+                time.sleep(3)
 
-        if not click_floating_button_and_wait(new_page, ["button[class*='bg-destructive'] >> visible=true", "text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
-            state_fab = check_page_state(new_page)
+            print("[INFO] Tab 2: Kembali di Halaman Review. Menyiapkan proses Reject...")
+
+        # LANGKAH REJECT (Halaman Review)
+        print("[INFO] Tab 2: Mengeklik tombol Reject pada FAB (Merah/X)...")
+        reject_clicked = click_reject_fab_button(review_tab)
+        if not reject_clicked:
+            state_fab = check_page_state(review_tab)
             if state_fab != "OK" and state_fab != "CAPTCHA_SOLVED":
+                try: review_tab.close()
+                except: pass
                 return state_fab
+            try: review_tab.close()
+            except: pass
             return "ERROR_FAB_REJECT"
-
-        time.sleep(1)
-        print("[INFO] Mengeklik menu 'Reject'...")
-        reject_btn = new_page.locator("button[class*='bg-destructive'], div.fab-item:has(span:has-text('Reject')) button, div.fab-item:has(span:has-text('Tolak')) button, button:has-text('Reject'), button:has-text('REJECT'), button:has-text('Tolak')").first
-        reject_btn.wait_for(state="visible", timeout=10000)
-        reject_btn.click()
+        
         time.sleep(2)
-
-        print("[INFO] Membaca tombol konfirmasi Reject...")
-        confirm_reject_btn = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("text=KONFIRMASI").first
+        print("[INFO] Tab 2: Membaca tombol konfirmasi Reject...")
+        confirm_reject_btn = review_tab.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("text=KONFIRMASI").first
         if confirm_reject_btn.count() == 0:
-            confirm_reject_btn = new_page.locator("text=KONFIRMASI").last
+            confirm_reject_btn = review_tab.locator("text=KONFIRMASI").last
 
         if dry_run:
             print("[DRY_RUN] Menghentikan klik KONFIRMASI reject agar assignment tetap utuh.")
-            new_page.keyboard.press("Escape")
+            review_tab.keyboard.press("Escape")
             time.sleep(1)
         else:
-            print("[LIVE] Mengeklik KONFIRMASI Reject...")
+            print("[LIVE] Tab 2: Mengeklik KONFIRMASI Reject...")
             confirm_reject_btn.click()
             
-            print("[INFO] Menunggu respon dari server pasca-Reject...")
+            print("[INFO] Tab 2: Menunggu respon dari server pasca-Reject...")
             try:
-                new_page.locator("text=Berhasil reject assignment").first.wait_for(state="visible", timeout=15000)
-                print("[OK] Notifikasi 'Berhasil reject assignment' muncul.")
+                review_tab.locator("text=Berhasil reject assignment").first.wait_for(state="visible", timeout=15000)
+                print("[OK] Tab 2: Notifikasi 'Berhasil reject assignment' muncul.")
             except:
-                state_after_reject = check_page_state(new_page)
+                state_after_reject = check_page_state(review_tab)
                 if state_after_reject == "CAPTCHA_SOLVED":
-                    print("[WARN] Terkena CAPTCHA persis saat submit Reject. Status reject kemungkinan gagal.")
+                    print("[WARN] Terkena CAPTCHA persis saat submit Reject.")
+                    try: review_tab.close()
+                    except: pass
                     return "ERROR_CAPTCHA_INTERRUPT"
-                    
-                if new_page.locator("text=failed to edit assignment approval").count() > 0 or new_page.locator("text=failed to edit").count() > 0:
-                    print("[ERROR] Server menolak reject (failed to edit assignment approval). Meminta ulangi...")
+                if review_tab.locator("text=failed to edit assignment approval").count() > 0 or review_tab.locator("text=failed to edit").count() > 0:
+                    print("[ERROR] Server menolak reject.")
+                    try: review_tab.close()
+                    except: pass
                     return "ERROR_SERVER_REJECT"
-                
-                print("[ERROR] Tidak mendapatkan notifikasi sukses reject. Meminta ulangi...")
+                print("[ERROR] Tidak mendapatkan notifikasi sukses reject.")
+                try: review_tab.close()
+                except: pass
                 return "ERROR_SERVER_REJECT"
-                
-            time.sleep(2)
 
-        new_page.close()
+        time.sleep(2)
+        try: review_tab.close()
+        except: pass
         return "SUCCESS"
+
 
     except Exception as e:
         print(f"[ERROR] Assignment gagal diproses: {e}")
-        try:
-            if 'new_page' in locals() and new_page:
-                new_page.close()
-        except: pass
         return f"ERROR: {str(e)[:50]}"
     finally:
-        if target_tab:
-            try: target_tab.close()
+        # SELALU tutup Tab 2 setelah selesai memproses assignment ini!
+        if review_tab:
+            try:
+                review_tab.close()
+                print("[INFO] Tab 2 (Review) berhasil ditutup. Kembali fokus ke Tab 1.")
             except: pass
 
 
@@ -739,8 +992,20 @@ def run_automation():
     password = cfg.get("password", "")
     dry_run = cfg.get("dry_run", "True").strip().lower() == "true"
     headless = cfg.get("headless", "False").strip().lower() == "true"
+    headless_mode = headless or "--headless" in sys.argv
 
-    # Membaca daftar URL dari file assignment_links.txt
+    # Siapkan logger CSV realtime di folder scrape_results dengan format nama yang urut dan presisi
+    results_dir = os.path.join(parent_dir, "scrape_results")
+    os.makedirs(results_dir, exist_ok=True)
+    timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(results_dir, f"reject_batch_log_{timestamp_str}.csv")
+    
+    with open(log_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["No", "Timestamp", "Assignment_ID", "URL", "Status"])
+        f.flush()
+        
+    print(f"[INFO] Log CSV realtime telah disiapkan: {log_file}")
     target_urls = []
     links_file = os.path.join(current_dir, "assignment_links.txt")
     try:
@@ -771,62 +1036,124 @@ def run_automation():
     else:
         print("[SUCCESS] VPN BPS aktif/terhubung.")
 
-    force_kill_cdp_chrome()
-    headless_mode = headless or "--headless" in sys.argv
-    chrome_proc = launch_real_chrome(headless=headless_mode)
-    if not chrome_proc: return
-
-    # Siapkan logger csv
-    os.makedirs("../scrape_results", exist_ok=True)
-    timestamp_str = datetime.datetime.now().strftime("%Y%md_%H%M%S")
-    log_file = f"../scrape_results/reject_batch_log_{timestamp_str}.csv"
-    with open(log_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Timestamp", "URL", "Status"])
-
+    print("\n=== FASIH-SM ANOMALY & REJECT AUTOMATION (MANUAL BROWSER HYBRID MODE) ===")
+    print("[INFO] Script dikonfigurasi untuk MENGGUNAKAN CHROME YANG SEDANG TERBUKA.")
+    print("[INFO] Pastikan Anda telah membuka Chrome & Login secara manual di fasih-sm.bps.go.id:")
+    print(r'       "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeAutomationProfile"')
+    print("--------------------------------------------------------------------------------")
+    
     with sync_playwright() as p:
         try:
-            print("[INFO] Menghubungkan ke browser Chrome via CDP...")
-            browser = p.chromium.connect_over_cdp("http://localhost:9222")
+            print("[INFO] Terhubung ke Chrome yang sedang berjalan di port 9222...")
+            try:
+                browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            except Exception as e:
+                print(f"[ERROR] Gagal terhubung ke Chrome: {e}")
+                print("\n[PETUNJUK JALANKAN CHROME]")
+                print("1. Tutup SEMUA jendela Chrome yang sedang terbuka.")
+                print(r'2. Jalankan perintah ini di CMD:')
+                print(r'   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeAutomationProfile"')
+                print("3. Di Chrome tersebut, buka https://fasih-sm.bps.go.id/app dan login secara manual hingga masuk ke Dashboard.")
+                print("4. Setelah berhasil di Dashboard, jalankan ulang skrip python ini.")
+                return
+
+            print("[SUCCESS] Berhasil terhubung ke Chrome Anda!")
             context = browser.contexts[0]
-            try: context.clear_cookies()
-            except: pass
+            apply_stealth_to_context(context)
+            
+            # Cari tab yang sudah membuka fasih-sm.bps.go.id, atau gunakan tab pertama
+            sso_tab = None
+            for page in context.pages:
+                if "fasih-sm.bps.go.id" in page.url:
+                    sso_tab = page
+                    break
+            
+            if not sso_tab:
+                if len(context.pages) > 0:
+                    sso_tab = context.pages[0]
+                else:
+                    sso_tab = context.new_page()
 
-            sso_tab = context.pages[0] if len(context.pages) > 0 else context.new_page()
-            if headless_mode: sso_tab.set_viewport_size({"width": 1366, "height": 768})
+            login_success = False
+            for initial_attempt in range(3):
+                print(f"[INFO] Menyiapkan sesi login BPS di Tab 1 (Percobaan {initial_attempt+1}/3)...")
+                if login_sso_tab(sso_tab, username, password):
+                    login_success = True
+                    break
+                else:
+                    print(f"[WARN] Sesi login belum aktif. Silakan pastikan Anda sudah login manual di Chrome... (Jeda 8 detik, Percobaan {initial_attempt+1}/3)")
+                    time.sleep(8)
 
-            print("[INFO] Menyiapkan sesi login BPS di Tab 1...")
-            if not login_sso_tab(sso_tab, username, password):
-                raise Exception("Gagal login SSO BPS.")
+            if not login_success:
+                print("[WARN] Sesi login belum aktif. Melanjutkan ke alur pemrosesan URL (skrip akan tetap mencoba memproses)...")
 
             for idx_url, url in enumerate(target_urls):
                 status = process_assignment(context, url, headless_mode, dry_run)
  
-                # Cek jika butuh login ulang
-                if status == "ERROR_SESSION":
-                    print("[WARN] Sesi terputus! Melakukan relogin...")
-                    if not login_sso_tab(sso_tab, username, password):
-                        print("[ERROR] Relogin gagal. Menghentikan batch.")
+                # Jika terdeteksi bot (ERROR_BOT_DETECTED) / Sesi Rusak, LANGSUNG BUNYIKAN ALARM DAN PAUSE TERMINAL INSTAN!
+                if status in ["ERROR_BOT_DETECTED", "ERROR_SESSION", "ERROR_CAPTCHA_TIMEOUT"]:
+                    print("\n" + "!"*70)
+                    print(f"🔔 [ALARM TERDETEKSI BOT / SESI HABIS] ID: {url[-8:]} -> Status: '{status}'")
+                    print("!"*70 + "\n")
+                    
+                    # 1. LANGSUNG BUNYIKAN ALARM SOUND TANPA DELAY APAPUN!
+                    play_alert_sound()
+                    
+                    print("\n" + "="*70)
+                    print("📌 TERDETEKSI BOT / CAPTCHA PERLU DITANGANI MANUSIA:")
+                    print("Otomatisasi dihentikan sementara secara INSTAN.")
+                    print("\nLangkah Penanganan Anda:")
+                    print("1. Jika Chrome terblokir, tutup Chrome dan jalankan kembali di CMD:")
+                    print(r'   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeAutomationProfile"')
+                    print("2. Akses https://fasih-sm.bps.go.id/app di Chrome tersebut dan lakukan Login SSO secara manual hingga masuk ke Dashboard.")
+                    print("3. Setelah Anda berada di Dashboard, KEMBALI KE TERMINAL INI.")
+                    print("="*70)
+                    
+                    try:
+                        input("\n👉 TEKAN ENTER DI TERMINAL INI JIKA ANDA SUDAH SELESAI LOGIN/REFRESH UNTUK MELANJUTKAN AUTOMATION... ")
+                    except:
+                        time.sleep(15)
+                        
+                    print("\n[INFO] Menghubungkan kembali skrip ke Chrome yang sudah Anda perbaiki...")
+                    try:
+                        browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                        context = browser.contexts[0]
+                        apply_stealth_to_context(context)
+                        print("[SUCCESS] Berhasil terhubung kembali ke Chrome!")
+                    except Exception as e_reconnect:
+                        print(f"[ERROR] Gagal terhubung kembali ke Chrome: {e_reconnect}. Menghentikan batch.")
                         break
-                    # Coba proses ulang url yang sama
+                        
+                    print("[INFO] Memproses ulang URL setelah Anda memberikan konfirmasi...")
                     status = process_assignment(context, url, headless_mode, dry_run)
                 
-                # Cek jika reject gagal karena interupsi server / CAPTCHA
+                # Cek jika reject gagal karena interupsi server / CAPTCHA biasa
                 if status in ["ERROR_CAPTCHA_INTERRUPT", "ERROR_SERVER_REJECT", "ERROR_SUBMIT_EDIT"]:
                     print(f"[WARN] Status {status}. Mencoba ulang URL ini 1 kali lagi...")
                     status = process_assignment(context, url, headless_mode, dry_run)
  
-                print(f"[RESULT] URL {url[-8:]} -> {status}")
+                assignment_id = url.split("/")[-1] if "/" in url else url
+                print(f"[RESULT] #{idx_url + 1} | ID: {assignment_id[-8:]} -> {status}")
  
-                # Tulis log
+                # Tulis log secara REALTIME langsung ke file CSV di disk
                 with open(log_file, "a", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
-                    writer.writerow([datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), url, status])
+                    writer.writerow([
+                        idx_url + 1,
+                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        assignment_id,
+                        url,
+                        status
+                    ])
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except: pass
+                print(f"[INFO] Row #{idx_url + 1} ({status}) berhasil ditulis secara realtime ke {os.path.basename(log_file)}")
                 
-                # Jeda manusiawi agar tidak memicu deteksi bot (6 sampai 12 detik acak)
                 if idx_url < len(target_urls) - 1:
                     import random
-                    sleep_time = random.randint(6, 12)
+                    sleep_time = random.randint(7, 10)
                     print(f"[INFO] Jeda manusiawi: Beristirahat {sleep_time} detik sebelum membuka URL berikutnya...")
                     time.sleep(sleep_time)
 
@@ -836,11 +1163,8 @@ def run_automation():
             print(f"[ERROR] Automation terhenti mendadak: {e}")
         finally:
             print("[INFO] Menutup browser...")
-            try: browser.close()
+            try: context.close()
             except: pass
-            if chrome_proc:
-                try: chrome_proc.terminate()
-                except: pass
             force_kill_cdp_chrome()
 
 if __name__ == '__main__':

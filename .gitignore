@@ -3,29 +3,46 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environment
+# Environment & IDE
 .env
 .venv
 env/
 venv/
 ENV/
+.vscode/
+.idea/
 
-# Chrome / Web scraping cache
+# Chrome / Playwright User Profiles & Debug Caches
 chrome_data/
 chrome_debug_data/
+chrome_automation_profile/
+chrome_guest_profile*/
+chrome_persistent_user_profile/
+test_profile_*/
+test_profile*
+
+# Scrape Results, Logs & Debug Screenshots
 scrape_results/
 archive/
-
-# Data files & logs
 *.csv
 *.xlsx
 *.log
+*.png
+*.jpg
+*.jpeg
 
-# OS generated files
+# OS Generated Files
 .DS_Store
 Thumbs.db
 
-# Secrets and Configs
-config.txt
-config*.txt
+# Secrets, Local Configs & Target Link Lists
 credentials.json
+!credentials.example.json
+config.txt
+vpn_config.txt
+!config.example.txt
+!vpn_config.example.txt
+automation/config.txt
+automation/vpn_config.txt
+scraping/config.txt
+assignment_links.txt
