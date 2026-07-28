@@ -25,9 +25,9 @@ def main(auto_profile_idx=None, auto_csv_path=None):
         return
 
     # 2. Baca config.txt
-    config_file = "config.txt"
+    config_file = os.path.join(current_dir, "config.txt")
     if not os.path.exists(config_file):
-        print("[ERROR] config.txt tidak ditemukan.")
+        print(f"[ERROR] config.txt tidak ditemukan di: {config_file}")
         return
         
     config = configparser.ConfigParser()
@@ -70,7 +70,7 @@ def main(auto_profile_idx=None, auto_csv_path=None):
     if auto_csv_path is not None:
         selected_csv = auto_csv_path
     else:
-        results_dir = "scrape_results"
+        results_dir = os.path.join(parent_dir, "scrape_results")
         if not os.path.exists(results_dir):
             print(f"\n[ERROR] Folder {results_dir} tidak ditemukan.")
             return

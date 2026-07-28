@@ -214,75 +214,89 @@ def run_scrape_ksa(commodity="Padi", auto_profile_idx=None):
 
         # Pemilihan Komoditas (Padi / Jagung)
         print(f"Memilih Komoditas: {commodity_label}...")
-        comm_selected = False
-        
         try:
-            trigger = page.locator("button:has-text('Komoditas'), div:has-text('Komoditas'), [role='combobox']").last
-            if trigger.count() > 0 and trigger.is_visible():
-                trigger.click(no_wait_after=True, timeout=3000)
-            else:
-                other_label = "Jagung" if commodity_label == "Padi" else "Padi"
-                page.get_by_text(other_label).first.click(no_wait_after=True, timeout=3000)
-        except:
+            # Cek status komoditas di layar
             try:
-                page.get_by_text("Komoditas").last.click(no_wait_after=True, timeout=3000)
-                page.keyboard.press("Tab")
-                time.sleep(0.5)
-                page.keyboard.press("Enter")
+                curr_val = page.evaluate("""() => {
+                    const labels = Array.from(document.querySelectorAll('span, div, label, p'));
+                    const kLabel = labels.find(el => el.textContent.trim().startsWith('Komoditas'));
+                    return kLabel && kLabel.parentElement ? kLabel.parentElement.innerText : '';
+                }""")
+                if curr_val:
+                    print(f"[INFO] Komoditas aktif di layar saat ini: '{curr_val.replace(chr(10), ' ')}'")
             except: pass
-                
-        time.sleep(1.5)
-        
-        try:
-            option_item = page.locator("[cmdk-item], [role='option'], div").filter(has_text=commodity_label).last
-            if option_item.count() > 0 and option_item.is_visible():
-                option_item.click(no_wait_after=True, force=True, timeout=5000)
-                comm_selected = True
-            else:
-                page.get_by_text(commodity_label).last.click(no_wait_after=True, force=True, timeout=5000)
-                comm_selected = True
+
+            # 1. Buka dropdown khusus Komoditas di samping label 'Komoditas:'
+            dropdown_clicked = page.evaluate("""() => {
+                const labels = Array.from(document.querySelectorAll('span, div, label, p'));
+                const kLabel = labels.find(el => el.textContent.trim().startsWith('Komoditas'));
+                if (kLabel) {
+                    const parent = kLabel.closest('div') || kLabel.parentElement;
+                    if (parent) {
+                        const trigger = parent.querySelector('button, [role="combobox"], select, div[class*="select"]');
+                        if (trigger) {
+                            trigger.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""")
+            
+            if not dropdown_clicked:
+                try:
+                    page.locator("text=Komoditas: >> xpath=.. >> button, text=Komoditas: >> xpath=.. >> [role='combobox']").first.click(force=True, timeout=3000)
+                except: pass
+
+            time.sleep(1.5)
+
+            # 2. Klik opsi komoditas target (Padi / Jagung)
+            option_selected = page.evaluate(f"""(target) => {{
+                const items = Array.from(document.querySelectorAll('[role="option"], [cmdk-item], li, div[cmdk-item]'));
+                const matched = items.find(i => i.textContent.trim() === target || (i.textContent.includes(target) && i.children.length <= 1));
+                if (matched) {{
+                    matched.click();
+                    return true;
+                }}
+                return false;
+            }}""", commodity_label)
+
+            if not option_selected:
+                try:
+                    page.locator("[role='option'], [cmdk-item]").filter(has_text=commodity_label).first.click(force=True, timeout=3000)
+                except: pass
+
+            time.sleep(1.5)
+            
+            # 3. Bersihkan sisa backdrop / overlay jika ada
+            try:
+                page.keyboard.press("Escape")
+                page.evaluate("() => document.body.click()")
+            except: pass
+            print(f"[SUCCESS] Komoditas {commodity_label} berhasil dipilih!")
         except Exception as e_comm:
-            print(f"[WARN] Kendala mengeklik opsi Komoditas {commodity_label}: {e_comm}")
+            print(f"[WARN] Kendala memilih Komoditas {commodity_label}: {e_comm}")
 
         print(f"Menunggu data {commodity_label} selesai dimuat...")
-        time.sleep(6)
+        time.sleep(5)
         try: page.wait_for_load_state("domcontentloaded", timeout=15000)
         except: pass
-        if comm_selected:
-            print(f"[SUCCESS] Komoditas {commodity_label} berhasil dipilih!")
-
-        print("Mencari tombol Download Excel...")
-        download_button = None
-        for selector in [
-            "button:has-text('Download Excel'):visible",
-            "a:has-text('Download Excel'):visible",
-            "text=Download Excel:visible",
-            "button:has-text('Download'):visible",
-            "a:has-text('Download'):visible",
-            "text=Download:visible",
-            "text=Unduh:visible"
-        ]:
-            try:
-                if page.locator(selector).first.is_visible():
-                    download_button = page.locator(selector).first
-                    break
-            except Exception:
-                pass
-
-        if not download_button:
-            print("[WARN] Tombol download khusus tidak terdeteksi via text biasa, mencoba mencari elemen unduh...")
-            try:
-                download_button = page.locator("button:visible, a:visible").filter(has_text="Download").first
-            except Exception:
-                pass
 
         print("Memulai download file...")
         try:
             with page.expect_download(timeout=60000) as download_info:
-                if download_button and download_button.is_visible():
-                    download_button.click()
-                else:
-                    page.click("//*[contains(translate(text(), 'DOWNLOAD', 'download'), 'download')]", timeout=10000)
+                # Gunakan JS DOM click langsung pada tombol Download Excel untuk menembus seluruh pointer interception
+                js_clicked = page.evaluate("""() => {
+                    const btns = Array.from(document.querySelectorAll('button, a'));
+                    const targetBtn = btns.find(b => b.textContent.includes('Download Excel') || b.textContent.includes('Download') || b.textContent.includes('Unduh'));
+                    if (targetBtn) {
+                        targetBtn.click();
+                        return true;
+                    }
+                    return false;
+                }""")
+                if not js_clicked:
+                    page.click("button:has-text('Download Excel'), button:has-text('Download')", force=True, timeout=10000)
             
             download = download_info.value
             original_filename = download.suggested_filename
