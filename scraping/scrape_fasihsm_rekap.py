@@ -424,21 +424,10 @@ def run(auto_profile_idx=None):
                     print(f"✅ Request {target_role} tertangkap! Role ID: {survey_role_id}")
                     print(f"[DEBUG] Raw Payload ditangkap: {json.dumps(raw_payload)}")
                     
-                    # Kita buat ulang base_payload yang bersih untuk memastikan tidak ada filter yang nyangkut
-                    base_payload = {
-                        "surveyPeriodId": survey_period_id,
-                        "surveyRoleId": survey_role_id,
-                        "size": 10,
-                        "page": 0,
-                        "search": "",
-                        "target": "TARGET_ONLY",
-                        "region": {
-                            "region1Id": None, "region2Id": None, "region3Id": None,
-                            "region4Id": None, "region5Id": None, "region6Id": None,
-                            "region7Id": None, "region8Id": None, "region9Id": None, "region10Id": None
-                        },
-                        "regionSummaryLevel": 6
-                    }
+                    # Gunakan payload asli yang ditangkap dari browser (preserves regional filters & scope)
+                    base_payload = raw_payload.copy()
+                    if "size" not in base_payload or not base_payload["size"]:
+                        base_payload["size"] = 10
                     print(f"[DEBUG] Base Payload yang akan digunakan: {json.dumps(base_payload)}")
                 else:
                     print(f"Peringatan: Tidak ada network request 'report-progress-by-responsibility' yang tertangkap.")
@@ -689,8 +678,22 @@ def run(auto_profile_idx=None):
                     "RAW_BODY_TEXT", "sync_time"
                 ])
                 
-            total_sls_rows = 0
+            # Deduplikasi data petugas berdasarkan email agar tidak terjadi penulisan ganda (double output)
+            seen_officers = set()
+            unique_records = []
             for officer in all_records:
+                email_key = (officer.get("email") or officer.get("username") or "").strip().lower()
+                if email_key:
+                    if email_key not in seen_officers:
+                        seen_officers.add(email_key)
+                        unique_records.append(officer)
+                else:
+                    unique_records.append(officer)
+            
+            print(f"[INFO] Total petugas unik setelah deduplikasi: {len(unique_records)} (dari {len(all_records)} entri terambil)")
+
+            total_sls_rows = 0
+            for officer in unique_records:
                 email = officer.get("email") or officer.get("username")
                 total_assignment = officer.get("total", 0)
                 region_summary = officer.get("regionSummary", [])
