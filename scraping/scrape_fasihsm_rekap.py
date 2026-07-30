@@ -259,10 +259,8 @@ def run(auto_profile_idx=None):
         
         print("Navigasi ke halaman Login Fasih...")
         try:
-            # Go to oauth_login.html first to avoid direct-link bot detection
             page.goto("https://fasih-sm.bps.go.id/oauth_login.html", timeout=30000, wait_until="domcontentloaded")
             
-            # Click Login SSO BPS button if it's there
             print("Mencari tombol Login SSO BPS...")
             try:
                 page.locator("text=SSO BPS").first.click(timeout=5000)
@@ -270,28 +268,34 @@ def run(auto_profile_idx=None):
                 try:
                     page.click("//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sso bps')]", timeout=5000)
                 except Exception:
-                    pass # Maybe already logged in
+                    pass
                 
-            # Now we should be on SSO BPS page
-            if "sso.bps.go.id" in page.url:
+            # Tunggu hingga halaman berpindah ke SSO BPS (hingga 15 detik)
+            for _ in range(15):
+                if "sso.bps.go.id" in page.url or page.locator('input[name="username"]').count() > 0:
+                    break
+                time.sleep(1)
+
+            if "sso.bps.go.id" in page.url or page.locator('input[name="username"]').count() > 0:
                 print("Berada di halaman login SSO. Melakukan pengisian kredensial otomatis...")
                 if not username or not password:
-                    print("Username atau password di config.txt kosong! Silakan isi terlebih dahulu.")
+                    print("[ERROR] Username atau password di config.txt kosong! Silakan isi terlebih dahulu.")
                     return None
                     
                 page.fill('input[name="username"]', username)
                 page.fill('input[name="password"]', password)
-                page.click('button[type="submit"], input[type="submit"]')
+                page.click('button[type="submit"], input[type="submit"]', no_wait_after=True)
                 
-                print("Menunggu proses login selesai...")
-                try:
-                    page.wait_for_url(lambda url: "fasih-sm.bps.go.id" in url, timeout=15000)
-                except Exception:
-                    print("Timeout menunggu redirect login. Kita coba paksa lanjut...")
-                    time.sleep(3)
+                print("Menunggu proses login & redirect SSO BPS selesai...")
+                for _ in range(30):
+                    if "sso.bps.go.id" not in page.url and "fasih-sm.bps.go.id" in page.url:
+                        print("[SUCCESS] Login SSO BPS berhasil!")
+                        break
+                    time.sleep(1)
+                time.sleep(2)
         except Exception as e:
-            print("Terjadi sedikit masalah saat auto-login:", e)
-            print("Script akan tetap memaksa lanjut ke target URL...")
+            print("Terjadi masalah saat auto-login:", e)
+            print("Script akan tetap mencoba lanjut ke target URL...")
 
         print("Menavigasi ke URL target dasbor kegiatan (menunggu hingga 4 menit)...")
         try:
