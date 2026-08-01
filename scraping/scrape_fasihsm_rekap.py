@@ -430,8 +430,7 @@ def run(auto_profile_idx=None):
                     
                     # Gunakan payload asli yang ditangkap dari browser (preserves regional filters & scope)
                     base_payload = raw_payload.copy()
-                    if "size" not in base_payload or not base_payload["size"]:
-                        base_payload["size"] = 10
+                    base_payload["size"] = 10  # Ukuran standar 10 yang terbukti 100% stabil didukung API BPS Fasih-SM
                     print(f"[DEBUG] Base Payload yang akan digunakan: {json.dumps(base_payload)}")
                 else:
                     print(f"Peringatan: Tidak ada network request 'report-progress-by-responsibility' yang tertangkap.")
@@ -532,31 +531,16 @@ def run(auto_profile_idx=None):
         
         import datetime
         
+        # Hapus file resume state lama (jika ada) agar setiap run selalu dari awal dengan sesi bersih
         if os.path.exists(state_file):
             try:
-                with open(state_file, 'r') as f:
-                    state = json.load(f)
-                if state.get("survey_period_id") == survey_period_id and state.get("target_role") == target_role:
-                    ans = input(f"\n[INFO] Ditemukan progres sebelumnya yang terhenti di Halaman {state['current_page'] + 1}.\nApakah Anda ingin melanjutkan scraping? (y/n): ").strip().lower()
-                    if ans == 'y':
-                        resume_mode = True
-                        current_page = state['current_page']
-                        csv_file = state['filename']
-                        if os.path.exists(csv_file):
-                            print(f"File {csv_file} ditemukan. Melanjutkan dari Halaman {current_page + 1}...")
-                            output_filename = csv_file
-                            # Tidak perlu read ke all_records, nanti kita append saat saving
-                        else:
-                            print("File CSV tidak ditemukan, mulai dari awal.")
-                            current_page = 0
-                            resume_mode = False
-            except Exception as e:
-                print(f"Gagal membaca state resume: {e}")
-        
-        if not resume_mode:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-            filename_only = f"{survey_name}_rekap_petugas_{target_role.lower()}_{timestamp}.csv".replace(" ", "_")
-            output_filename = os.path.join(results_dir, filename_only)
+                os.remove(state_file)
+            except:
+                pass
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        filename_only = f"{survey_name}_rekap_petugas_{target_role.lower()}_{timestamp}.csv".replace(" ", "_")
+        output_filename = os.path.join(results_dir, filename_only)
         
         js_fetch_single = """
         async ([basePayload, pageIndex]) => {
@@ -569,7 +553,7 @@ def run(auto_profile_idx=None):
             
             const xsrf = decodeURIComponent(getCookie('XSRF-TOKEN'));
             const url = '/app/api/analytic/api/v2/assignment/report-progress-by-responsibility';
-            const pageSize = basePayload.size || 10;
+            const pageSize = basePayload.size || 20;
             
             let payload = { ...basePayload, page: pageIndex, size: pageSize };
             
@@ -605,9 +589,10 @@ def run(auto_profile_idx=None):
                     
                     if data.get("success") and data.get("data") and data.get("data").get("content") is not None:
                         content = data["data"]["content"]
+                        total_elements = data["data"].get("totalElements", len(all_records) + len(content))
                         all_records.extend(content)
-                        is_last = data["data"]["last"]
-                        print(f"✅ Sukses! (+{len(content)} baris. Total: {len(all_records)})")
+                        is_last = data["data"].get("last", True)
+                        print(f"✅ Sukses! (+{len(content)} petugas. Terkumpul: {len(all_records)} / Total Server: {total_elements})")
                         success = True
                     else:
                         print("Tidak ada data. (Selesai)")
