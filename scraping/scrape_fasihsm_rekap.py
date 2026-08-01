@@ -679,7 +679,40 @@ def run(auto_profile_idx=None):
                 else:
                     unique_records.append(officer)
             
-            print(f"[INFO] Total petugas unik setelah deduplikasi: {len(unique_records)} (dari {len(all_records)} entri terambil)")
+            # Verifikasi kelengkapan: Jika ada petugas tergeser di perbatasan SQL pagination BPS, lakukan Sweep Audit otomatis
+            if total_elements > 0 and len(unique_records) < total_elements:
+                missing_count = total_elements - len(unique_records)
+                print(f"\n⚠️ Terdeteksi {missing_count} petugas tergeser perbatasan pagination server BPS ({len(unique_records)} terkumpul vs {total_elements} total server).")
+                print("[INFO] Menjalankan Sweep Audit Otomatis (Mode Size Native BPS: 5) untuk melengkapi petugas yang tergeser...")
+                
+                sweep_payload = base_payload.copy()
+                sweep_payload["size"] = 5  # Gunakan size=5 yang 100% valid diterima server BPS (bebas HTTP 400)
+                sweep_page = 0
+                sweep_last = False
+                
+                while not sweep_last and len(unique_records) < total_elements:
+                    try:
+                        data = page.evaluate(js_fetch_single, [sweep_payload, sweep_page])
+                        if data.get("success") and data.get("data") and data.get("data").get("content") is not None:
+                            sweep_content = data["data"]["content"]
+                            sweep_last = data["data"].get("last", True)
+                            
+                            for off in sweep_content:
+                                ekey = (off.get("email") or off.get("username") or "").strip().lower()
+                                if ekey and ekey not in seen_officers:
+                                    seen_officers.add(ekey)
+                                    unique_records.append(off)
+                                    print(f"✅ Petugas tergeser berhasil ditemukan & ditambahkan: {ekey}")
+                        else:
+                            break
+                    except Exception as e_sweep:
+                        print(f"[WARN] Kendala saat Sweep Audit (Hal {sweep_page+1}): {e_sweep}")
+                        break
+                    sweep_page += 1
+                    if sweep_page > 60:
+                        break
+
+            print(f"[INFO] Total petugas unik final: {len(unique_records)} (dari total server BPS: {total_elements})")
 
             total_sls_rows = 0
             for officer in unique_records:
