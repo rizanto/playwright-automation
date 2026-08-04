@@ -430,7 +430,7 @@ def run(auto_profile_idx=None):
                     
                     # Gunakan payload asli yang ditangkap dari browser (preserves regional filters & scope)
                     base_payload = raw_payload.copy()
-                    base_payload["size"] = 10  # Ukuran standar 10 yang terbukti 100% stabil didukung API BPS Fasih-SM
+                    base_payload["size"] = 5  # Ukuran native 5 per halaman BPS (100% presisi tanpa pergeseran pagination)
                     print(f"[DEBUG] Base Payload yang akan digunakan: {json.dumps(base_payload)}")
                 else:
                     print(f"Peringatan: Tidak ada network request 'report-progress-by-responsibility' yang tertangkap.")
@@ -445,7 +445,7 @@ def run(auto_profile_idx=None):
             base_payload = {
                 "surveyPeriodId": survey_period_id,
                 "surveyRoleId": survey_role_id,
-                "size": 10,
+                "size": 5,
                 "page": 0,
                 "search": "",
                 "target": "TARGET_ONLY",
@@ -553,7 +553,7 @@ def run(auto_profile_idx=None):
             
             const xsrf = decodeURIComponent(getCookie('XSRF-TOKEN'));
             const url = '/app/api/analytic/api/v2/assignment/report-progress-by-responsibility';
-            const pageSize = basePayload.size || 20;
+            const pageSize = basePayload.size || 5;
             
             let payload = { ...basePayload, page: pageIndex, size: pageSize };
             
@@ -594,6 +594,7 @@ def run(auto_profile_idx=None):
                         is_last = data["data"].get("last", True)
                         print(f"✅ Sukses! (+{len(content)} petugas. Terkumpul: {len(all_records)} / Total Server: {total_elements})")
                         success = True
+                        time.sleep(0.3)  # Jeda 0.3s antar halaman untuk mencegah HTTP 429 Rate Limit
                     else:
                         print("Tidak ada data. (Selesai)")
                         is_last = True
@@ -601,28 +602,32 @@ def run(auto_profile_idx=None):
                 except Exception as e:
                     retries -= 1
                     err_msg = str(e)
-                    wait_time = (5 - retries) * 10 # 10s, 20s, 30s, 40s, 50s
-                    print(f"\n⚠️ Gagal: Server Fasih lambat atau error (Sisa percobaan: {retries}).")
-                    if retries > 0:
-                        print(f"Menunggu {wait_time} detik sebelum mencoba lagi agar server lega...")
-                        time.sleep(wait_time)
-                        
-                        # Refresh halaman untuk mereset koneksi dan XSRF-TOKEN
-                        if not vpn_auto_connect.is_vpn_connected():
-                            print("\n[!] VPN terdeteksi TERPUTUS saat penarikan data! Menghubungkan kembali VPN...")
-                            vpn_auto_connect.run_auto_vpn()
-                            time.sleep(5)
-                        else:
-                            print("Memperbarui session via login ulang di tab baru...")
-                            refresh_session(context, username, password)
-                        print("Mencoba merefresh halaman (F5) untuk memulihkan koneksi API...")
-                        try:
-                            page.reload(timeout=60000, wait_until="domcontentloaded")
-                            time.sleep(5)
-                        except:
-                            pass
+                    if "429" in err_msg or "RATE_LIMIT" in err_msg:
+                        print(f"\n⚠️ Terkena Rate Limit Server BPS (HTTP 429). Beristirahat 15 detik...")
+                        time.sleep(15)
                     else:
-                        print(f"❌ Error detail: {err_msg}")
+                        wait_time = (5 - retries) * 5
+                        print(f"\n⚠️ Gagal: Server Fasih lambat atau error (Sisa percobaan: {retries}).")
+                        if retries > 0:
+                            print(f"Menunggu {wait_time} detik sebelum mencoba lagi agar server lega...")
+                            time.sleep(wait_time)
+                            
+                            # Refresh halaman untuk mereset koneksi dan XSRF-TOKEN
+                            if not vpn_auto_connect.is_vpn_connected():
+                                print("\n[!] VPN terdeteksi TERPUTUS saat penarikan data! Menghubungkan kembali VPN...")
+                                vpn_auto_connect.run_auto_vpn()
+                                time.sleep(5)
+                            else:
+                                print("Memperbarui session via login ulang di tab baru...")
+                                refresh_session(context, username, password)
+                            print("Mencoba merefresh halaman (F5) untuk memulihkan koneksi API...")
+                            try:
+                                page.reload(timeout=60000, wait_until="domcontentloaded")
+                                time.sleep(5)
+                            except:
+                                pass
+                        else:
+                            print(f"❌ Error detail: {err_msg}")
             
             if not success:
                 print(f"\n❌ TERHENTI di Halaman {current_page + 1} karena server Fasih terus-menerus gagal merespons.")
@@ -679,40 +684,67 @@ def run(auto_profile_idx=None):
                 else:
                     unique_records.append(officer)
             
-            # Verifikasi kelengkapan: Jika ada petugas tergeser di perbatasan SQL pagination BPS, lakukan Sweep Audit otomatis
+            # Verifikasi kelengkapan: Jika petugas unik yang ditarik kurang dari total_elements server BPS, jalankan Sweep Audit
             if total_elements > 0 and len(unique_records) < total_elements:
                 missing_count = total_elements - len(unique_records)
-                print(f"\n⚠️ Terdeteksi {missing_count} petugas tergeser perbatasan pagination server BPS ({len(unique_records)} terkumpul vs {total_elements} total server).")
+                print(f"\n⚠️ Terdeteksi {missing_count} petugas belum lengkap ({len(unique_records)} unik terkumpul vs {total_elements} total server).")
                 print("[INFO] Menjalankan Sweep Audit Otomatis (Mode Size Native BPS: 5) untuk melengkapi petugas yang tergeser...")
                 
                 sweep_payload = base_payload.copy()
-                sweep_payload["size"] = 5  # Gunakan size=5 yang 100% valid diterima server BPS (bebas HTTP 400)
+                sweep_payload["size"] = 5
                 sweep_page = 0
                 sweep_last = False
                 
                 while not sweep_last and len(unique_records) < total_elements:
-                    try:
-                        data = page.evaluate(js_fetch_single, [sweep_payload, sweep_page])
-                        if data.get("success") and data.get("data") and data.get("data").get("content") is not None:
-                            sweep_content = data["data"]["content"]
-                            sweep_last = data["data"].get("last", True)
-                            
-                            for off in sweep_content:
-                                ekey = (off.get("email") or off.get("username") or "").strip().lower()
-                                if ekey and ekey not in seen_officers:
-                                    seen_officers.add(ekey)
-                                    unique_records.append(off)
-                                    print(f"✅ Petugas tergeser berhasil ditemukan & ditambahkan: {ekey}")
-                        else:
+                    sweep_retries = 3
+                    while sweep_retries > 0:
+                        try:
+                            data = page.evaluate(js_fetch_single, [sweep_payload, sweep_page])
+                            if data.get("success") and data.get("data") and data.get("data").get("content") is not None:
+                                sweep_content = data["data"]["content"]
+                                sweep_last = data["data"].get("last", True)
+                                
+                                for off in sweep_content:
+                                    all_records.append(off)
+                                    ekey = (off.get("email") or off.get("username") or "").strip().lower()
+                                    if ekey and ekey not in seen_officers:
+                                        seen_officers.add(ekey)
+                                        unique_records.append(off)
+                                        print(f"✅ Petugas tergeser berhasil ditemukan & ditambahkan: {ekey}")
+                            else:
+                                sweep_last = True
                             break
-                    except Exception as e_sweep:
-                        print(f"[WARN] Kendala saat Sweep Audit (Hal {sweep_page+1}): {e_sweep}")
-                        break
+                        except Exception as e_sweep:
+                            sweep_retries -= 1
+                            err_s = str(e_sweep)
+                            if "429" in err_s or "RATE_LIMIT" in err_s:
+                                print(f"[WARN] Rate limit saat Sweep Audit. Istirahat 15 detik...")
+                                time.sleep(15)
+                            else:
+                                time.sleep(2)
                     sweep_page += 1
+                    time.sleep(0.3)
                     if sweep_page > 60:
                         break
 
-            print(f"[INFO] Total petugas unik final: {len(unique_records)} (dari total server BPS: {total_elements})")
+            print(f"[INFO] Total petugas unik final: {len(unique_records)} (Total item mentah: {len(all_records)} / Total server BPS: {total_elements})")
+
+            # KRITERIA UTAMA PEMBATALAN:
+            # Ekspor dibatalkan HANYA DAN PASTI JIKA total petugas unik KURANG dari totalElements server BPS
+            if total_elements > 0 and len(unique_records) < total_elements:
+                missing_records = total_elements - len(unique_records)
+                print("\n" + "!"*70)
+                print(f"❌ [ERROR CRITICAL] Scraping GAGAL LENGKAP ({len(unique_records)} petugas unik terkumpul vs {total_elements} total di server BPS, kurang {missing_records} petugas)!")
+                print("📌 PENGIRIMAN KE GOOGLE SHEETS DIBATALKAN UNTUK MENJAGA INTEGRITAS SPREADSHEET!")
+                print("!"*70 + "\n")
+                
+                try: browser.close()
+                except: pass
+                if chrome_process:
+                    try: chrome_process.terminate()
+                    except: pass
+                force_kill_cdp_chrome()
+                return None
 
             total_sls_rows = 0
             for officer in unique_records:

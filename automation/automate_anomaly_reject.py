@@ -8,9 +8,10 @@ from playwright.sync_api import sync_playwright
 # Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+sys.path.append(current_dir)
 
 import vpn_auto_connect
+from humanizer import human_click, human_move_to, human_type, human_scroll
 
 def load_config():
     import configparser
@@ -168,34 +169,81 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
 def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
     """Mencari checkbox berdasarkan label teks dan menyetel statusnya."""
     print(f"[INFO] Mengatur checkbox '{label_text}' ke: {target_state}")
+    
+    # 1. Selector presisi dari Outer HTML:
+    #    Switchbox memiliki id="switch-*-control" dan class 'tw:data-checked:bg-primary'
+    #    Status ON: thumb di dalam memiliki class 'tw:data-checked:translate-x-4'
+    priority_switch_selectors = [
+        "[id$='-control'][id*='switch']",
+        "div[class*='data-checked:bg-primary']",
+    ]
+    for sw_sel in priority_switch_selectors:
+        try:
+            loc = page_obj.locator(f"xpath=//div[contains(normalize-space(.),'{label_text}')]").locator(sw_sel)
+            if loc.count() == 0:
+                loc = page_obj.locator(sw_sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                sw = loc.first
+                data_checked = sw.evaluate("""
+                    el => {
+                        if (el.getAttribute('data-checked') !== null) return true;
+                        const thumb = el.querySelector('[id$="-thumb"]');
+                        if (thumb) {
+                            const cls = thumb.getAttribute('class') || '';
+                            return cls.includes('translate-x-4');
+                        }
+                        return false;
+                    }
+                """)
+                is_checked = bool(data_checked)
+                print(f"   -> Switchbox '{label_text}' status: {'ON' if is_checked else 'OFF'}, target: {'ON' if target_state else 'OFF'}")
+                if is_checked != target_state:
+                    sw.click(force=True)
+                    time.sleep(1)
+                    print(f"   -> Switchbox berhasil di-toggle.")
+                else:
+                    print(f"   -> Status switchbox sudah sesuai.")
+                return True
+        except: pass
+
+    # 2. Fallback: pencarian relatif berdasarkan teks label
     try:
         label_loc = page_obj.locator(f"text={label_text}").first
         label_loc.wait_for(state="visible", timeout=15000)
         
-        container = label_loc.locator("xpath=ancestor::div[.//input[@type='checkbox'] or .//*[@role='switch']][1]")
+        container = label_loc.locator("xpath=ancestor::div[.//input[@type='checkbox'] or .//*[@role='switch'] or .//*[@id[contains(.,'-control')]]  ][1]")
         if container.count() == 0:
             print(f"[WARN] Tidak dapat menemukan checkbox di sekitar label '{label_text}'.")
             return False
             
-        checkbox_input = container.locator("input[type='checkbox'], [role='switch']").first
+        checkbox_input = container.locator("[id$='-control'][id*='switch'], input[type='checkbox'], [role='switch']").first
         
         is_checked = False
         if checkbox_input.count() > 0:
             try:
-                is_checked = checkbox_input.is_checked()
+                data_checked = checkbox_input.evaluate("""
+                    el => {
+                        if (el.getAttribute('data-checked') !== null) return true;
+                        const thumb = el.querySelector('[id$="-thumb"]');
+                        if (thumb) return (thumb.getAttribute('class') || '').includes('translate-x-4');
+                        return false;
+                    }
+                """)
+                is_checked = bool(data_checked)
             except:
-                aria_checked = checkbox_input.get_attribute("aria-checked")
-                if aria_checked:
-                    is_checked = (aria_checked.lower() == "true")
+                try:
+                    is_checked = checkbox_input.is_checked()
+                except:
+                    aria_checked = checkbox_input.get_attribute("aria-checked")
+                    if aria_checked:
+                        is_checked = (aria_checked.lower() == "true")
         else:
             class_attr = container.get_attribute("class") or ""
             is_checked = "checked" in class_attr
             
         if is_checked != target_state:
             print(f"   -> Mengklik elemen switch untuk mengubah status.")
-            
-            # Coba cari elemen div visual yang biasa menjadi trigger click (Tailwind/Custom UI)
-            visual_switch = container.locator("div[class*='cursor-pointer'], div[id$='-control']").first
+            visual_switch = container.locator("[id$='-control'][id*='switch'], div[class*='cursor-pointer']").first
             if visual_switch.count() > 0:
                 visual_switch.click(force=True)
             else:
@@ -307,42 +355,35 @@ def run_automation():
             if not login_sso_tab(sso_tab, username, password):
                 raise Exception("Gagal melakukan login SSO BPS pada Tab 1.")
 
-            # Tab 2: Khusus memuat detail assignment dan navigasi preview
-            print("[INFO] Membuka Target Tab (Tab 2)...")
-            target_tab = context.new_page()
-            if headless_mode:
-                target_tab.set_viewport_size({"width": 1366, "height": 768})
-
-            # Buka URL target detail assignment di Tab 2
-            print(f"[INFO] Membuka URL target detail assignment di Tab 2: {target_url}")
+            # Menggunakan Tab 1 langsung untuk navigasi ke detail assignment
+            target_tab = sso_tab
+            print(f"[INFO] Membuka URL target detail assignment di Tab 1: {target_url}")
             target_tab.goto(target_url, wait_until="domcontentloaded", timeout=60000)
             time.sleep(5) # Tunggu AJAX loading selesai
 
             # Deteksi jika halaman error (sesi tidak sah / gagal muat)
             if "There's some error" in target_tab.content() or target_tab.locator("text=There's some error").count() > 0:
-                print("[WARN] Terdeteksi halaman error di Tab 2. Mencoba login ulang di Tab 1...")
-                target_tab.close()
-                
-                # Ulangi login di Tab 1
+                print("[WARN] Terdeteksi halaman error. Mencoba login ulang...")
                 if not login_sso_tab(sso_tab, username, password):
                     raise Exception("Gagal login ulang pada Tab 1.")
                 
-                # Buka ulang Tab 2
-                print("[INFO] Membuka kembali Target Tab (Tab 2)...")
-                target_tab = context.new_page()
-                if headless_mode:
-                    target_tab.set_viewport_size({"width": 1366, "height": 768})
+                print("[INFO] Membuka kembali URL target...")
                 target_tab.goto(target_url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(5)
 
             # 3. Klik tombol Review di kanan atas (membuka tab baru, yaitu Tab 3)
             print("[INFO] Menunggu tombol 'Review'...")
-            review_btn = target_tab.locator("text=Review").first
+            # Selector presisi: data-tsd-source dari assignment-action.tsx:142, atau ikon telegram
+            review_btn = target_tab.locator("[data-tsd-source*='assignment-action.tsx:142']").first
+            if review_btn.count() == 0 or not review_btn.is_visible():
+                review_btn = target_tab.locator("button:has(.tabler-icon-brand-telegram)").first
+            if review_btn.count() == 0 or not review_btn.is_visible():
+                review_btn = target_tab.locator("button:has-text('Review')").first
             review_btn.wait_for(state="visible", timeout=20000)
             
-            print("[INFO] Mengeklik tombol 'Review' dan menunggu tab baru terbuka...")
+            print("[INFO] Mengeklik tombol 'Review' (secara alami/humanizer) dan menunggu tab baru terbuka...")
             with context.expect_page() as new_page_info:
-                review_btn.click()
+                human_click(target_tab, review_btn)
             new_page = new_page_info.value
             new_page.wait_for_load_state("domcontentloaded")
             if headless_mode:
@@ -386,52 +427,80 @@ def run_automation():
             time.sleep(2)
 
 
+            print("[INFO] Menunggu seluruh elemen halaman Mode Edit ter-render sepenuhnya...")
+            for _ in range(20):
+                try:
+                    body_txt = new_page.evaluate("() => document.body ? document.body.innerText : ''")
+                    if "Kirim" in body_txt or "KIRIM" in body_txt or "CATATAN" in body_txt or "Catatan" in body_txt:
+                        print("[OK] Komponen Halaman Mode Edit terdeteksi selesai dimuat!")
+                        break
+                except: pass
+                time.sleep(1)
+            time.sleep(2)
+
             # 5. Klik bagian CATATAN di sidebar kiri
             print("[INFO] Mencari dan mengeklik 'CATATAN' di sidebar kiri...")
-            # Berdasarkan gambar, CATATAN adalah item di sidebar navigasi kiri
-            catatan_loc = None
-            # Coba selektor nav sidebar
-            for nav_sel in [
-                "nav >> text=CATATAN", 
+            catatan_clicked = False
+            catatan_selectors = [
+                "div[title='CATATAN']",
+                "div[title='Catatan']",
+                "[title='CATATAN']",
+                "[title='Catatan']",
+                "nav >> text=CATATAN",
                 "[class*='sidebar'] >> text=CATATAN",
-                "[class*='nav'] >> text=CATATAN",
                 "aside >> text=CATATAN",
-                "text=CATATAN"
-            ]:
+                "text=CATATAN",
+                "text=Catatan",
+                "//span[contains(translate(text(), 'catatan', 'CATATAN'), 'CATATAN')]",
+                "//div[contains(translate(text(), 'catatan', 'CATATAN'), 'CATATAN')]",
+                "//a[contains(translate(text(), 'catatan', 'CATATAN'), 'CATATAN')]"
+            ]
+            
+            start_t = time.time()
+            while time.time() - start_t < 20:
+                for nav_sel in catatan_selectors:
+                    try:
+                        loc = new_page.locator(nav_sel)
+                        for idx in range(loc.count()):
+                            item = loc.nth(idx)
+                            if item.is_visible():
+                                box = item.bounding_box()
+                                if box and box['x'] < 350:
+                                    print(f"[OK] Menemukan 'CATATAN' di sidebar kiri (x={box['x']}, y={box['y']}). Mengeklik...")
+                                    item.scroll_into_view_if_needed()
+                                    item.click(force=True)
+                                    catatan_clicked = True
+                                    break
+                        if catatan_clicked: break
+                    except: pass
+                if catatan_clicked: break
+                time.sleep(1)
+
+            if not catatan_clicked:
+                print("[WARN] Mencoba JS click fallback untuk menu 'CATATAN' di sidebar...")
+                js_click_catatan = """
+                () => {
+                    let els = Array.from(document.querySelectorAll('*'));
+                    let target = els.find(e => e.offsetWidth > 0 && e.offsetHeight > 0 && e.getBoundingClientRect().x < 350 && e.innerText && e.innerText.trim().toUpperCase() === 'CATATAN');
+                    if (target) {
+                        target.click();
+                        let parent = target.closest('a, button, li, div[role="button"]');
+                        if (parent && parent !== target) parent.click();
+                        return true;
+                    }
+                    return false;
+                }
+                """
+                catatan_clicked = new_page.evaluate(js_click_catatan)
+
+            print("[INFO] Menunggu form CATATAN & switchbox dimuat di layar...")
+            for _ in range(15):
                 try:
-                    loc = new_page.locator(nav_sel)
-                    if loc.count() > 0 and loc.first.is_visible():
-                        catatan_loc = loc.first
-                        print(f"[OK] Menemukan CATATAN dengan selektor: {nav_sel}")
+                    if new_page.locator("text=Tampilkan Anomali Usaha dan Keluarga").first.is_visible():
+                        print("[SUCCESS] Form CATATAN & Switchbox 'Tampilkan Anomali Usaha dan Keluarga' BERHASIL terlihat di layar!")
                         break
-                except:
-                    pass
-            
-            if not catatan_loc:
-                # Fallback: cari berdasarkan teks dan pilih yang di bagian kiri (x < 200)
-                all_catatan = new_page.locator("text=CATATAN")
-                for i in range(all_catatan.count()):
-                    el = all_catatan.nth(i)
-                    if el.is_visible():
-                        box = el.bounding_box()
-                        if box and box["x"] < 200:
-                            catatan_loc = el
-                            print(f"[OK] Menemukan CATATAN di sidebar (x={box['x']})")
-                            break
-            
-            if catatan_loc:
-                catatan_loc.click()
-                time.sleep(2)
-                # Tunggu konten CATATAN form muncul di area tengah
-                try:
-                    new_page.locator("text=Tampilkan Anomali Usaha dan Keluarga").wait_for(state="visible", timeout=15000)
-                except:
-                    time.sleep(3)
-                print("[OK] Konten CATATAN berhasil dimuat.")
-            else:
-                print("[WARN] Tidak menemukan CATATAN di sidebar, mencoba scroll ke bawah halaman...")
-                new_page.keyboard.press("End")
-                time.sleep(2)
+                except: pass
+                time.sleep(1)
 
             # 6. Centang "Tampilkan Anomali Usaha dan Keluarga"
             toggle_checkbox_by_label(new_page, "Tampilkan Anomali Usaha dan Keluarga", True)
@@ -450,76 +519,89 @@ def run_automation():
 
             time.sleep(1)
 
-            # 8. Klik tombol KIRIM di kanan atas
+            # 8. Klik tombol KIRIM di header edit mode
             print("[INFO] Mengeklik tombol KIRIM...")
-            kirim_btn = new_page.locator("button:has-text('KIRIM'):visible").first
-            if kirim_btn.count() == 0:
-                kirim_btn = new_page.locator("button:has-text('Kirim'):visible").first
-            kirim_btn.click()
+            # Tombol KIRIM: class tw:bg-primary, teks 'Kirim'
+            kirim_btn = new_page.locator("button[class*='tw:bg-primary']:has-text('Kirim')").first
+            if kirim_btn.count() == 0 or not kirim_btn.is_visible():
+                kirim_btn = new_page.locator("button:has-text('Kirim')").first
+            kirim_btn.click(force=True)
             time.sleep(2)
 
             # 9. Klik KIRIM di pop-up konfirmasi pertama
             print("[INFO] Konfirmasi pertama: pop-up KIRIM...")
             if dry_run:
-                print("[DRY_RUN] Membatalkan pengiriman dengan mengeklik 'Batal' pada modal KIRIM.")
-                batal_btn = new_page.locator("div.ant-modal-content, div[role='dialog']").locator("button:has-text('Batal'):visible").first
-                if batal_btn.count() > 0:
-                    batal_btn.click()
-                else:
-                    new_page.keyboard.press("Escape")
+                print("[DRY_RUN] Membatalkan pengiriman dengan menekan Escape pada modal KIRIM.")
+                new_page.keyboard.press("Escape")
                 time.sleep(2)
             else:
-                # Tahap 1: Modal "Kirim"
-                print("[LIVE] Mengeklik KIRIM di modal pertama...")
-                modal_kirim1 = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
+                # Tahap 1: Popup KIRIM - tombol 'Kirim' (class tw:bg-primary)
+                print("[LIVE] Mengeklik KIRIM di popup pertama...")
+                modal_kirim1 = new_page.locator("[role='dialog'] button[class*='tw:bg-primary']:has-text('Kirim')").first
+                if modal_kirim1.count() == 0 or not modal_kirim1.is_visible():
+                    modal_kirim1 = new_page.locator("[role='dialog'] button:has-text('Kirim')").first
                 if modal_kirim1.count() > 0:
-                    modal_kirim1.click()
+                    modal_kirim1.click(force=True)
                     time.sleep(2)
                 else:
-                    print("[WARN] Tombol Kirim pada pop-up pertama tidak ditemukan!")
+                    print("[WARN] Tombol Kirim pada popup pertama tidak ditemukan!")
                 
-                # Tahap 2: Modal "Konfirmasi Kirim"
-                print("[LIVE] Mengeklik KONFIRMASI di modal kedua...")
-                modal_kirim2 = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Konfirmasi'):visible, button:has-text('KONFIRMASI'):visible").first
+                # Tahap 2: Popup KONFIRMASI KIRIM - tombol 'Konfirmasi' (class tw:bg-primary)
+                print("[LIVE] Mengeklik KONFIRMASI di popup kedua...")
+                modal_kirim2 = new_page.locator("[role='dialog'] button[class*='tw:bg-primary']:has-text('Konfirmasi')").first
+                if modal_kirim2.count() == 0 or not modal_kirim2.is_visible():
+                    modal_kirim2 = new_page.locator("[role='dialog'] button:has-text('Konfirmasi')").first
                 if modal_kirim2.count() > 0:
-                    modal_kirim2.click()
+                    modal_kirim2.click(force=True)
                     time.sleep(5)
                 else:
-                    print("[WARN] Tombol Konfirmasi pada pop-up kedua tidak ditemukan!")
+                    print("[WARN] Tombol Konfirmasi pada popup kedua tidak ditemukan!")
 
-            # 11. Klik tombol melayang kembali (panah/kembali) di kanan bawah
+            # 11. Tombol Kembali ke preview: ikon tabler-icon-arrow-left (draggable-toolbar.tsx:123)
             print("[INFO] Kembali ke mode preview...")
-            back_fab = new_page.locator("button[title*='Kembali']:visible").first
-            if back_fab.count() > 0:
+            back_fab = new_page.locator("button:has(.tabler-icon-arrow-left)").first
+            if back_fab.count() == 0 or not back_fab.is_visible():
+                back_fab = new_page.locator("[data-tsd-source*='draggable-toolbar.tsx:123']").first
+            if back_fab.count() == 0 or not back_fab.is_visible():
+                back_fab = new_page.locator("button[title*='Kembali']").first
+            if back_fab.count() > 0 and back_fab.is_visible():
                 back_fab.click(force=True)
-            else:
-                new_page.locator("#fasih-fab-root button").first.click(force=True)
             time.sleep(2)
 
-            # Pop-up konfirmasi tinggalkan halaman (Discard changes)
+            # Pop-up konfirmasi tinggalkan halaman: tombol 'Tinggalkan' class f:bg-warning
             print("[INFO] Mengecek pop-up konfirmasi tinggalkan halaman...")
-            leave_btn = new_page.locator("div[role='dialog'] button:has-text('Keluar'), div[role='alertdialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan'), div[role='alertdialog'] button:has-text('Tinggalkan'), div[role='dialog'] button:has-text('Kembali'), div[role='alertdialog'] button:has-text('Kembali')").first
+            leave_btn = new_page.locator("[role='dialog'] button[class*='bg-warning']:has-text('Tinggalkan')").first
+            if leave_btn.count() == 0 or not leave_btn.is_visible():
+                leave_btn = new_page.locator("[role='dialog'] button:has-text('Tinggalkan'), [role='dialog'] button:has-text('Keluar')").first
             if leave_btn.count() > 0:
-                print("[INFO] Memilih 'Keluar/Tinggalkan' pada pop-up konfirmasi...")
-                leave_btn.click()
+                print("[INFO] Memilih 'Tinggalkan' pada pop-up konfirmasi...")
+                leave_btn.click(force=True)
                 time.sleep(5)
 
-            # 12. Klik floating button (+) lagi, pilih Reject
-            if not click_floating_button_and_wait(new_page, ["button[class*='bg-destructive'] >> visible=true", "span.fab-label:has-text('Reject') >> visible=true", "span.fab-label:has-text('Tolak') >> visible=true", "text=Reject >> visible=true", "text=REJECT >> visible=true", "text=Tolak >> visible=true"]):
-                raise Exception("Gagal mengeklik floating button (+) di halaman preview")
-            time.sleep(1)
-
-            print("[INFO] Mengeklik menu 'Reject'...")
-            reject_btn = new_page.locator("button[class*='bg-destructive'], div.fab-item:has(span:has-text('Reject')) button, div.fab-item:has(span:has-text('Tolak')) button, button:has-text('Reject'), button:has-text('REJECT'), button:has-text('Tolak')").first
-            reject_btn.wait_for(state="visible", timeout=10000)
-            reject_btn.click()
+            # 12. Reject langsung dari halaman review
+            # Tombol Reject FAB: ikon tabler-icon-x, class f:bg-destructive
+            print("[INFO] Mencari tombol Reject FAB...")
+            reject_fab = new_page.locator("button:has(.tabler-icon-x)").first
+            if reject_fab.count() == 0 or not reject_fab.is_visible():
+                reject_fab = new_page.locator("[data-tsd-source*='draggable-toolbar.tsx:138']:has(.tabler-icon-x)").first
+            if reject_fab.count() == 0 or not reject_fab.is_visible():
+                reject_fab = new_page.locator("button[class*='bg-destructive']").first
+            if reject_fab.count() > 0 and reject_fab.is_visible():
+                print("[OK] Tombol Reject FAB ditemukan. Mengeklik...")
+                reject_fab.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+            else:
+                raise Exception("Gagal menemukan tombol FAB Reject di halaman review")
             time.sleep(2)
 
-            # Pop-up konfirmasi reject
+            # Pop-up konfirmasi reject: tombol 'Konfirmasi' class f:bg-destructive (action-reject.tsx)
             print("[INFO] Membaca tombol konfirmasi Reject...")
-            confirm_reject_btn = new_page.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("text=KONFIRMASI").first
+            confirm_reject_btn = new_page.locator("[role='dialog'] button[class*='bg-destructive']:has-text('Konfirmasi')").first
+            if confirm_reject_btn.count() == 0 or not confirm_reject_btn.is_visible():
+                confirm_reject_btn = new_page.locator("[data-tsd-source*='action-reject.tsx']:has-text('Konfirmasi')").first
+            if confirm_reject_btn.count() == 0 or not confirm_reject_btn.is_visible():
+                confirm_reject_btn = new_page.locator("[role='dialog'] button:has-text('Konfirmasi')").first
             if confirm_reject_btn.count() == 0:
-                confirm_reject_btn = new_page.locator("text=KONFIRMASI").last
+                confirm_reject_btn = new_page.locator("text=Konfirmasi").last
 
             if dry_run:
                 print("[DRY_RUN] Menghentikan klik KONFIRMASI reject agar assignment tetap utuh.")

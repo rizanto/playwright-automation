@@ -8,9 +8,10 @@ from playwright.sync_api import sync_playwright
 # Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+sys.path.append(current_dir)
 
 import vpn_auto_connect
+from humanizer import human_click, human_move_to, human_type, human_scroll
 
 def check_page_state(page_obj):
     """
@@ -154,6 +155,7 @@ def launch_chrome_with_profile(headless=False):
         executable,
         "--remote-debugging-port=9222",
         f"--user-data-dir={user_data_dir}",
+        "--disable-blink-features=AutomationControlled",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-infobars",
@@ -325,19 +327,42 @@ def click_floating_button_and_wait(page_obj, indicator_selectors, max_retries=6)
 def check_switchbox_state(page_obj, label_text):
     """Mengecek apakah switchbox dengan label tertentu aktif (ON/checked) atau mati (OFF/unchecked)."""
     try:
+        # 1. Cek via selector presisi: id="switch-*-control", status dari thumb translate-x-4
+        priority_selectors = [
+            "[id$='-control'][id*='switch']",
+            "div[class*='data-checked:bg-primary']"
+        ]
+        for sw_sel in priority_selectors:
+            try:
+                loc = page_obj.locator(f"xpath=//div[contains(normalize-space(.),'{label_text}')]").locator(sw_sel)
+                if loc.count() == 0:
+                    loc = page_obj.locator(sw_sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    sw = loc.first
+                    data_checked = sw.evaluate("""
+                        el => {
+                            if (el.getAttribute('data-checked') !== null) return true;
+                            const thumb = el.querySelector('[id$="-thumb"]');
+                            if (thumb) return (thumb.getAttribute('class') || '').includes('translate-x-4');
+                            return false;
+                        }
+                    """)
+                    return bool(data_checked)
+            except: pass
+        
+        # 2. Fallback: cari via label teks
         label_loc = page_obj.locator(f"text={label_text}").first
         if label_loc.count() > 0 and label_loc.is_visible():
             container = label_loc.locator("xpath=ancestor::div[.//input[@type='checkbox'] or .//*[@role='switch'] or contains(@class, 'switch')][1]")
             if container.count() > 0:
-                # Perbaikan syntax CSS: input[type='checkbox'] bukan input[@type='checkbox']
-                sw = container.locator("input[type='checkbox'], button[role='switch'], .ant-switch, [class*='switch']").first
+                sw = container.locator("[id$='-control'][id*='switch'], input[type='checkbox'], button[role='switch'], .ant-switch, [class*='switch']").first
                 if sw.count() > 0:
                     is_checked = False
                     try: is_checked = sw.is_checked()
                     except: pass
                     aria_checked = sw.get_attribute("aria-checked") == "true"
                     cls = sw.get_attribute("class") or ""
-                    has_class_checked = "ant-switch-checked" in cls or "checked" in cls or "bg-primary" in cls or "bg-blue" in cls
+                    has_class_checked = "ant-switch-checked" in cls or "checked" in cls or "bg-primary" in cls or "translate-x-4" in cls
                     if is_checked or aria_checked or has_class_checked:
                         return True
     except Exception as e:
@@ -349,70 +374,75 @@ def has_unchecked_anomaly_in_sidebar(page_obj):
     """Mengecek apakah ada bagian anomali di sidebar kiri yang belum tercentang (tidak memiliki icon centang hijau ✓)."""
     try:
         result = page_obj.evaluate("""() => {
-            const sidebar = document.querySelector('aside') || document.querySelector('[class*="sidebar"]') || document.querySelector('nav');
-            if (!sidebar) return { has_unchecked: true, detail: "Sidebar tidak ditemukan" };
-
-            // Ambil semua elemen teks judul di sidebar
-            const allLabels = Array.from(sidebar.querySelectorAll('h1, h2, h3, h4, h5, h6, span, div, p, a')).filter(el => {
-                const text = (el.innerText || '').trim();
-                return text.length > 3 && text.length < 60 && el.children.length <= 2;
-            });
-
+            // Gunakan div[title] langsung (dari Outer HTML nyata BPS)
+            // ANOMALI USAHA: div[title='ANOMALI USAHA'], ANOMALI KELUARGA: div[title='ANOMALI KELUARGA']
+            // Ikon centang hijau: svg.tw:text-success (class dari Outer HTML)
+            
+            const anomaliTitles = ['ANOMALI USAHA', 'ANOMALI KELUARGA'];
             let uncheckedItems = [];
 
-            for (let el of allLabels) {
-                const text = el.innerText.trim().toUpperCase();
-                if (text.includes('ANOMALI') || text.includes('BLOK') || text.includes('CATATAN') || text.includes('KETERANGAN')) {
-                    // Cari elemen baris terdekat untuk item ini saja (bukan seluruh sidebar)
-                    let row = el;
-                    while (row && row !== sidebar && row.parentElement !== sidebar) {
-                        const rect = row.getBoundingClientRect();
-                        if (rect.height < 120 && rect.height > 15) {
-                            break;
-                        }
-                        row = row.parentElement;
+            for (const titleAttr of anomaliTitles) {
+                const el = document.querySelector(`div[title='${titleAttr}']`);
+                if (!el) continue;
+                
+                // Cari row container terdekat
+                const row = el.closest('[title]') || el.parentElement || el;
+                
+                // Cek ikon centang hijau (tw:text-success atau warna success)
+                const svgs = Array.from(row.querySelectorAll('svg, path'));
+                let hasCheck = false;
+                for (let s of svgs) {
+                    const style = window.getComputedStyle(s);
+                    const cls = (s.getAttribute('class') || '').toLowerCase();
+                    const color = (style.color || '').toLowerCase();
+                    const stroke = (s.getAttribute('stroke') || '').toLowerCase();
+                    const fill = (s.getAttribute('fill') || '').toLowerCase();
+                    if (
+                        cls.includes('success') || cls.includes('green') || cls.includes('check') ||
+                        color.includes('rgb(34, 197, 94)') || color.includes('rgb(16, 185, 129)') ||
+                        color.includes('rgb(82, 196, 26)') || color.includes('rgb(20, 184, 166)') ||
+                        stroke.includes('green') || stroke.includes('#22c55e') || stroke.includes('#10b981') ||
+                        fill.includes('green') || fill.includes('#22c55e') || fill.includes('#10b981')
+                    ) {
+                        hasCheck = true;
+                        break;
                     }
-                    if (!row || row === sidebar) row = el.parentElement || el;
+                }
+                if (!hasCheck) uncheckedItems.push(titleAttr);
+            }
 
-                    // Periksa ikon centang hijau di dalam baris spesifik ini saja
-                    const svgs = Array.from(row.querySelectorAll('svg, i, path'));
-                    let hasCheck = false;
-
-                    for (let s of svgs) {
-                        const style = window.getComputedStyle(s);
-                        const stroke = (s.getAttribute('stroke') || '').toLowerCase();
-                        const fill = (s.getAttribute('fill') || '').toLowerCase();
-                        const color = (style.color || '').toLowerCase();
-                        const cls = (s.getAttribute('class') || '').toLowerCase();
-
-                        if (
-                            cls.includes('green') || cls.includes('emerald') || cls.includes('check') || cls.includes('success') ||
-                            stroke.includes('green') || stroke.includes('#22c55e') || stroke.includes('#10b981') || stroke.includes('#52c41a') ||
-                            fill.includes('green') || fill.includes('#22c55e') || fill.includes('#10b981') || fill.includes('#52c41a') ||
-                            color.includes('rgb(34, 197, 94)') || color.includes('rgb(16, 185, 129)') || color.includes('rgb(82, 196, 26)')
-                        ) {
-                            hasCheck = true;
-                            break;
+            // Fallback: jika div[title] tidak ditemukan, cek via sidebar text
+            if (uncheckedItems.length === 0) {
+                const sidebar = document.querySelector('aside') || document.querySelector('[class*="sidebar"]') || document.querySelector('nav');
+                if (sidebar) {
+                    const allLabels = Array.from(sidebar.querySelectorAll('div[title], span, div, a')).filter(el => {
+                        const text = (el.getAttribute('title') || el.innerText || '').trim();
+                        return text.length > 3 && text.length < 60 && (text.toUpperCase().includes('ANOMALI'));
+                    });
+                    for (let el of allLabels) {
+                        const text = (el.getAttribute('title') || el.innerText || '').trim().toUpperCase();
+                        if (!text.includes('ANOMALI')) continue;
+                        const row = el.closest('[class*="flex"][class*="cursor"]') || el.parentElement || el;
+                        const svgs = Array.from(row.querySelectorAll('svg, path'));
+                        let hasCheck = false;
+                        for (let s of svgs) {
+                            const style = window.getComputedStyle(s);
+                            const cls = (s.getAttribute('class') || '').toLowerCase();
+                            const color = (style.color || '').toLowerCase();
+                            if (cls.includes('success') || cls.includes('green') || cls.includes('check') ||
+                                color.includes('rgb(34, 197, 94)') || color.includes('rgb(16, 185, 129)')) {
+                                hasCheck = true; break;
+                            }
                         }
-                    }
-
-                    if (!hasCheck) {
-                        uncheckedItems.push(text.split('\\n')[0]);
+                        if (!hasCheck && !uncheckedItems.includes(text)) uncheckedItems.push(text);
                     }
                 }
             }
 
             if (uncheckedItems.length > 0) {
-                return {
-                    has_unchecked: true,
-                    detail: `Item tanpa centang hijau: ${uncheckedItems.join(', ')}`
-                };
+                return { has_unchecked: true, detail: `Item tanpa centang hijau: ${uncheckedItems.join(', ')}` };
             }
-
-            return {
-                has_unchecked: false,
-                detail: "Semua section di sidebar terkonfirmasi tercentang hijau lengkap"
-            };
+            return { has_unchecked: false, detail: "Semua anomali di sidebar terkonfirmasi tercentang hijau" };
         }""")
 
         if result.get("has_unchecked", True):
@@ -427,22 +457,17 @@ def has_unchecked_anomaly_in_sidebar(page_obj):
         return True
 
 def click_edit_fab_button(page_obj):
-    """Mencari dan mengeklik tombol Edit Assignment (lingkaran oranye dengan ikon pensil di float bar kanan)."""
-    print("[INFO] Mencari dan mengeklik tombol FAB 'Edit Assignment' (Oranye/Pensil)...")
+    """Mencari dan mengeklik tombol Edit Assignment (ikon pensil / tabler-icon-edit di float bar kanan)."""
+    print("[INFO] Mencari dan mengeklik tombol FAB 'Edit Assignment' (Pensil/tabler-icon-edit)...")
     
-    # 1. Selector spesifik untuk tombol Edit
-    selectors = [
-        "button[title*='Edit']",
-        "button[aria-label*='Edit']",
-        "a[title*='Edit']",
-        "button:has-text('Edit')",
-        "button.bg-orange-500",
-        "button[class*='orange']",
-        "button[class*='amber']",
-        "button[class*='warning']"
+    # 1. Selector presisi dari Outer HTML: tombol dengan ikon tabler-icon-edit, class f:bg-primary
+    #    data-tsd-source="/src/.../draggable-toolbar.tsx:138:15" dan bukan f:bg-destructive
+    priority_selectors = [
+        "button:has(.tabler-icon-edit)",
+        "[data-tsd-source*='draggable-toolbar.tsx:138']:has(.tabler-icon-edit)",
+        "button.f\\:bg-primary:has(svg.tabler-icon-edit)"
     ]
-    
-    for sel in selectors:
+    for sel in priority_selectors:
         try:
             loc = page_obj.locator(sel)
             for i in range(loc.count()):
@@ -450,25 +475,49 @@ def click_edit_fab_button(page_obj):
                 if el.is_visible():
                     box = el.bounding_box()
                     if box and box['x'] > 700:
-                        print(f"[OK] Menemukan tombol Edit FAB via selector '{sel}' di x={box['x']}")
-                        el.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                        print(f"[OK] Menemukan tombol Edit FAB via selector presisi '{sel}' di x={box['x']}")
+                        human_click(page_obj, el)
                         return True
-        except:
-            pass
+        except: pass
 
-    # 2. Cek semua tombol melayang di kuadran kanan layar (posisi paling bawah di float bar)
+    # 2. Selector fallback berbasis class CSS
+    fallback_selectors = [
+        "button[title*='Edit']",
+        "button[aria-label*='Edit']",
+        "a[title*='Edit']",
+        "button.bg-orange-500",
+        "button[class*='orange']",
+        "button[class*='amber']",
+        "button[class*='warning']"
+    ]
+    for sel in fallback_selectors:
+        try:
+            loc = page_obj.locator(sel)
+            for i in range(loc.count()):
+                el = loc.nth(i)
+                if el.is_visible():
+                    box = el.bounding_box()
+                    if box and box['x'] > 700:
+                        print(f"[OK] Menemukan tombol Edit FAB via fallback '{sel}' di x={box['x']}")
+                        human_click(page_obj, el)
+                        return True
+        except: pass
+
+    # 3. Fallback posisi: tombol paling bawah di kuadran kanan layar (bukan destructive)
     try:
         right_btns = []
-        all_btns = page_obj.locator("button:visible, a:visible, div[role='button']:visible")
+        all_btns = page_obj.locator("button:visible")
         for i in range(all_btns.count()):
             b = all_btns.nth(i)
             box = b.bounding_box()
             if box and box['x'] > 750 and box['y'] > 200:
-                right_btns.append((box['y'], b))
+                cls = (b.get_attribute("class") or "").lower()
+                if "destructive" not in cls:
+                    right_btns.append((box['y'], b))
         if right_btns:
             right_btns.sort(key=lambda item: item[0], reverse=True)
-            print(f"[INFO] Fallback: Mengeklik tombol terbawah float bar kanan di y={right_btns[0][0]}")
-            right_btns[0][1].evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+            print(f"[INFO] Fallback posisi: Mengeklik tombol paling bawah non-destructive di y={right_btns[0][0]}")
+            human_click(page_obj, right_btns[0][1])
             return True
     except Exception as e:
         print(f"[WARN] Kendala fallback klik Edit FAB: {e}")
@@ -477,11 +526,30 @@ def click_edit_fab_button(page_obj):
 
 
 def click_reject_fab_button(page_obj):
-    """Mencari dan mengeklik tombol Reject (lingkaran merah dengan ikon X di float bar kanan)."""
-    print("[INFO] Mencari dan mengeklik tombol FAB 'Reject' (Merah/X)...")
+    """Mencari dan mengeklik tombol Reject (ikon X / tabler-icon-x dengan class f:bg-destructive di float bar)."""
+    print("[INFO] Mencari dan mengeklik tombol FAB 'Reject' (X/tabler-icon-x/destructive)...")
     
-    # 1. Selector spesifik untuk tombol Reject
-    selectors = [
+    # 1. Selector presisi dari Outer HTML: tombol dengan ikon tabler-icon-x, class f:bg-destructive
+    priority_selectors = [
+        "button:has(.tabler-icon-x)",
+        "[data-tsd-source*='draggable-toolbar.tsx:138']:has(.tabler-icon-x)",
+        "button[class*='bg-destructive']:has(svg.tabler-icon-x)"
+    ]
+    for sel in priority_selectors:
+        try:
+            loc = page_obj.locator(sel)
+            for i in range(loc.count()):
+                el = loc.nth(i)
+                if el.is_visible():
+                    box = el.bounding_box()
+                    if box and box['x'] > 700:
+                        print(f"[OK] Menemukan tombol Reject FAB via selector presisi '{sel}' di x={box['x']}")
+                        human_click(page_obj, el)
+                        return True
+        except: pass
+
+    # 2. Fallback berbasis class CSS
+    fallback_selectors = [
         "button[title*='Reject']",
         "button[aria-label*='Reject']",
         "button[title*='Tolak']",
@@ -493,8 +561,7 @@ def click_reject_fab_button(page_obj):
         "button[class*='red']",
         "button[class*='danger']"
     ]
-    
-    for sel in selectors:
+    for sel in fallback_selectors:
         try:
             loc = page_obj.locator(sel)
             for i in range(loc.count()):
@@ -502,16 +569,15 @@ def click_reject_fab_button(page_obj):
                 if el.is_visible():
                     box = el.bounding_box()
                     if box and box['x'] > 700:
-                        print(f"[OK] Menemukan tombol Reject FAB via selector '{sel}' di x={box['x']}")
-                        el.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                        print(f"[OK] Menemukan tombol Reject FAB via fallback '{sel}' di x={box['x']}")
+                        human_click(page_obj, el)
                         return True
-        except:
-            pass
+        except: pass
 
-    # 2. Cek semua tombol melayang di kuadran kanan layar
+    # 3. Fallback posisi: tombol ber-class destructive di kuadran kanan
     try:
         right_btns = []
-        all_btns = page_obj.locator("button:visible, a:visible, div[role='button']:visible")
+        all_btns = page_obj.locator("button:visible")
         for i in range(all_btns.count()):
             b = all_btns.nth(i)
             box = b.bounding_box()
@@ -522,13 +588,13 @@ def click_reject_fab_button(page_obj):
             for y, btn in right_btns:
                 cls = (btn.get_attribute("class") or "").lower()
                 title = (btn.get_attribute("title") or "").lower()
-                if "red" in cls or "destructive" in cls or "danger" in cls or "reject" in title or "tolak" in title:
-                    print(f"[INFO] Fallback: Mengeklik tombol Reject berdasarkan class/title di y={y}")
-                    btn.evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                if "destructive" in cls or "red" in cls or "danger" in cls or "reject" in title or "tolak" in title:
+                    print(f"[INFO] Fallback posisi: Mengeklik tombol Reject berdasarkan class di y={y}")
+                    human_click(page_obj, btn)
                     return True
             if len(right_btns) >= 2:
-                print(f"[INFO] Fallback: Mengeklik tombol urutan ke-2 di float bar kanan (Reject) di y={right_btns[1][0]}")
-                right_btns[1][1].evaluate("e => { e.click(); e.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
+                print(f"[INFO] Fallback posisi: Mengeklik tombol ke-2 di float bar kanan di y={right_btns[1][0]}")
+                human_click(page_obj, right_btns[1][1])
                 return True
     except Exception as e:
         print(f"[WARN] Kendala fallback klik Reject FAB: {e}")
@@ -538,6 +604,66 @@ def click_reject_fab_button(page_obj):
 def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
     """Mencari checkbox berdasarkan label teks dan menyetel statusnya."""
     print(f"[INFO] Mengatur checkbox '{label_text}' ke: {target_state}")
+    
+    # 1. Coba selector presisi dari Outer HTML:
+    #    Switchbox memiliki id="switch-*-control" dan class 'tw:data-checked:bg-primary'
+    #    Status ON: elemen thumb di dalam memiliki class 'tw:data-checked:translate-x-4'
+    priority_switch_selectors = [
+        f"[id$='-control'][id*='switch']",          # id="switch-cl-14-control" (pattern stabil)
+        f"div[class*='data-checked:bg-primary']",   # class unik dari Outer HTML switchbox
+    ]
+    for sw_sel in priority_switch_selectors:
+        try:
+            # Cari yang dekat dengan teks label
+            loc = page_obj.locator(f"xpath=//div[contains(normalize-space(.),'{label_text}')]").locator(sw_sel)
+            if loc.count() == 0:
+                loc = page_obj.locator(sw_sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                sw = loc.first
+                # Cek status: data-checked attribute atau translate-x pada thumb
+                data_checked = sw.evaluate("""
+                    el => {
+                        if (el.getAttribute('data-checked') !== null) return true;
+                        const thumb = el.querySelector('[id$="-thumb"]');
+                        if (thumb) {
+                            const cls = thumb.getAttribute('class') || '';
+                            return cls.includes('translate-x-4');
+                        }
+                        return false;
+                    }
+                """)
+                is_checked = bool(data_checked)
+                print(f"   -> Switchbox '{label_text}' status saat ini: {'ON' if is_checked else 'OFF'}, target: {'ON' if target_state else 'OFF'}")
+                if is_checked != target_state:
+                    human_click(page_obj, sw)
+                    time.sleep(1)
+                    print(f"   -> Switchbox berhasil di-toggle.")
+                else:
+                    print(f"   -> Status switchbox sudah sesuai.")
+                return True, is_checked
+        except: pass
+
+    # 2. Coba XPath relatif berdasarkan konten teks label
+    relative_switch_xpaths = [
+        f"xpath=//div[contains(normalize-space(.),'{label_text}')]//div[@id[contains(.,'switch') and contains(.,'-control')]]",
+        f"xpath=//div[contains(.,'{label_text}')]//div[@role='switch']",
+        f"xpath=//div[contains(.,'{label_text}')]//button[@role='switch']",
+        f"xpath=//div[contains(.,'{label_text}')]//input[@type='checkbox']",
+        f"xpath=//label[contains(.,'{label_text}')]//input"
+    ]
+    for rel_xp in relative_switch_xpaths:
+        try:
+            loc = page_obj.locator(rel_xp)
+            if loc.count() > 0 and loc.first.is_visible():
+                sw = loc.first
+                class_attr = (sw.get_attribute("class") or "") + " " + (sw.get_attribute("aria-checked") or "")
+                is_checked = "true" in class_attr.lower() or "checked" in class_attr.lower() or "active" in class_attr.lower()
+                if is_checked != target_state:
+                    sw.click(force=True)
+                    time.sleep(1)
+                return True, target_state
+        except: pass
+
     try:
         label_loc = page_obj.locator(f"text={label_text}").first
         label_loc.wait_for(state="visible", timeout=15000)
@@ -564,7 +690,6 @@ def toggle_checkbox_by_label(page_obj, label_text, target_state=True):
         if is_checked != target_state:
             print(f"   -> Mengklik elemen switch untuk mengubah status.")
             
-            # Coba cari elemen div visual yang biasa menjadi trigger click (Tailwind/Custom UI)
             visual_switch = container.locator("div[class*='cursor-pointer'], div[id$='-control']").first
             if visual_switch.count() > 0:
                 visual_switch.click(force=True)
@@ -680,21 +805,15 @@ def login_sso_tab(sso_tab, username, password):
         
     print(f"[ERROR] Gagal login SSO BPS: URL terakhir {sso_tab.url}")
     return False
-def process_assignment(context, url, headless_mode, dry_run):
+def process_assignment(main_tab, url, headless_mode, dry_run):
     print(f"\n{'='*50}")
-    print(f"[INFO] Memproses URL: {url}")
+    print(f"[INFO] Memproses URL (di tab yang sama): {url}")
     print(f"{'='*50}")
     
-    # Buka link baru di tab baru terlebih dahulu
-    old_pages = [p for p in context.pages]
-    main_tab = context.new_page()
-    if headless_mode:
-        main_tab.set_viewport_size({"width": 1366, "height": 768})
-
-    # Setelah tab baru terbuka, tutup tab lama
-    for p in old_pages:
-        try: p.close()
-        except: pass
+    if main_tab.is_closed():
+        main_tab = main_tab.context.new_page()
+        if headless_mode:
+            main_tab.set_viewport_size({"width": 1366, "height": 768})
 
     review_tab = None
     try:
@@ -736,46 +855,78 @@ def process_assignment(context, url, headless_mode, dry_run):
                 break
 
         try:
-            main_tab.locator("text=Informasi Assignment, text=STATUS ASSIGNMENT, text=Approved by pengawas, text=REJECTED").first.wait_for(state="visible", timeout=10000)
+            # Selector presisi: span status dari assignment-action.tsx:110
+            status_span = main_tab.locator("[data-tsd-source*='assignment-action.tsx:110']").first
+            if status_span.count() > 0:
+                status_span.wait_for(state="visible", timeout=10000)
+            else:
+                main_tab.locator("text=Approved by pengawas, text=APPROVED, text=REJECTED, text=STATUS ASSIGNMENT").first.wait_for(state="visible", timeout=10000)
         except: pass
             
         print("[INFO] Tab 1: Mengecek status assignment di halaman detail...")
+        
+        # Cek status via selector presisi terlebih dahulu
+        status_text_precise = ""
         try:
-            page_text = main_tab.evaluate("document.body.innerText").upper()
-        except:
-            page_text = main_tab.content().upper()
-            
-        import re
-        page_text_normalized = re.sub(r'\s+', ' ', page_text)
-            
-        if "RIWAYAT ASSIGNMENT" in page_text_normalized:
-            text_before_history = page_text_normalized.split("RIWAYAT ASSIGNMENT")[0]
+            status_span = main_tab.locator("[data-tsd-source*='assignment-action.tsx:110']").first
+            if status_span.count() > 0 and status_span.is_visible():
+                status_text_precise = (status_span.inner_text() or "").strip().upper()
+                print(f"[INFO] Tab 1: Status terdeteksi via selector presisi: '{status_text_precise}'")
+        except: pass
+        
+        if status_text_precise:
+            # Gunakan status presisi langsung
+            if "APPROVED BY PENGAWAS" in status_text_precise or "APPROVED BY" in status_text_precise:
+                pass  # Lanjutkan ke Review
+            elif "REJECTED" in status_text_precise:
+                print("[INFO] Status saat ini sudah REJECTED. Melewati assignment ini (ALREADY_REJECTED).")
+                return "ALREADY_REJECTED"
+            else:
+                print(f"[INFO] Status saat ini '{status_text_precise}' BUKAN 'Approved by pengawas' (UNPROCESSABLE_STATUS). Melewati...")
+                return "UNPROCESSABLE_STATUS"
         else:
-            text_before_history = page_text_normalized
-            
-        if "APPROVED BY PENGAWAS" not in text_before_history:
-            fallback_check = False
+            # Fallback: baca seluruh innerText halaman
             try:
-                if "APPROVED BY PENGAWAS" in page_text_normalized[:200]:
-                    fallback_check = True
-                if not fallback_check:
-                    idx = page_text_normalized.find("STATUS ASSIGNMENT")
-                    if idx != -1:
-                        status_snippet = page_text_normalized[idx:idx+100]
-                        if "APPROVED BY PENGAWAS" in status_snippet:
-                            fallback_check = True
-            except: pass
+                page_text = main_tab.evaluate("document.body.innerText").upper()
+            except:
+                page_text = main_tab.content().upper()
                 
-            if not fallback_check:
-                if "REJECTED BY" in page_text_normalized or "REJECTED" in page_text_normalized:
-                    print("[INFO] Status saat ini sudah REJECTED. Melewati assignment ini (ALREADY_REJECTED).")
-                    return "ALREADY_REJECTED"
-                else:
-                    print("[INFO] Status saat ini BUKAN 'Approved by pengawas' (UNPROCESSABLE_STATUS). Melewati...")
-                    return "UNPROCESSABLE_STATUS"
+            import re
+            page_text_normalized = re.sub(r'\s+', ' ', page_text)
+                
+            if "RIWAYAT ASSIGNMENT" in page_text_normalized:
+                text_before_history = page_text_normalized.split("RIWAYAT ASSIGNMENT")[0]
+            else:
+                text_before_history = page_text_normalized
+                
+            if "APPROVED BY PENGAWAS" not in text_before_history:
+                fallback_check = False
+                try:
+                    if "APPROVED BY PENGAWAS" in page_text_normalized[:200]:
+                        fallback_check = True
+                    if not fallback_check:
+                        idx = page_text_normalized.find("STATUS ASSIGNMENT")
+                        if idx != -1:
+                            status_snippet = page_text_normalized[idx:idx+100]
+                            if "APPROVED BY PENGAWAS" in status_snippet:
+                                fallback_check = True
+                except: pass
+                    
+                if not fallback_check:
+                    if "REJECTED BY" in page_text_normalized or "REJECTED" in page_text_normalized:
+                        print("[INFO] Status saat ini sudah REJECTED. Melewati assignment ini (ALREADY_REJECTED).")
+                        return "ALREADY_REJECTED"
+                    else:
+                        print("[INFO] Status saat ini BUKAN 'Approved by pengawas' (UNPROCESSABLE_STATUS). Melewati...")
+                        return "UNPROCESSABLE_STATUS"
             
         print("[INFO] Tab 1: Menunggu tombol 'Review'...")
-        review_btn = main_tab.locator("text=Review").first
+        # Selector presisi: data-tsd-source dari assignment-action.tsx:142, atau berdasarkan ikon telegram SVG
+        review_btn = main_tab.locator("[data-tsd-source*='assignment-action.tsx:142']").first
+        if review_btn.count() == 0 or not review_btn.is_visible():
+            review_btn = main_tab.locator("button:has(.tabler-icon-brand-telegram)").first
+        if review_btn.count() == 0 or not review_btn.is_visible():
+            review_btn = main_tab.locator("button:has-text('Review')").first
 
         try:
             review_btn.wait_for(state="visible", timeout=15000)
@@ -783,10 +934,11 @@ def process_assignment(context, url, headless_mode, dry_run):
             print("[WARN] Tombol Review tidak ditemukan di Tab 1. Assignment kemungkinan sudah ALREADY_REJECTED.")
             return "ALREADY_REJECTED"
 
-        print("[INFO] Tab 1: Mengeklik tombol 'Review' untuk membuka Halaman Review di Tab 2...")
-        with context.expect_page() as new_page_info:
-            review_btn.click()
+        print("[INFO] Tab 1: Mengeklik tombol 'Review' (secara alami/humanizer) untuk membuka Halaman Review di Tab 2...")
+        with main_tab.context.expect_page() as new_page_info:
+            human_click(main_tab, review_btn)
         review_tab = new_page_info.value
+        apply_stealth_to_context(review_tab.context)
         review_tab.wait_for_load_state("domcontentloaded")
         if headless_mode:
             review_tab.set_viewport_size({"width": 1366, "height": 768})
@@ -812,7 +964,14 @@ def process_assignment(context, url, headless_mode, dry_run):
 
         print("[INFO] Tab 2: Membuka panel CATATAN di Halaman Review untuk inspeksi awal...")
         catatan_loc = None
-        for nav_sel in ["nav >> text=CATATAN", "[class*='sidebar'] >> text=CATATAN", "aside >> text=CATATAN", "text=CATATAN"]:
+        for nav_sel in [
+            "div[title='CATATAN']",
+            "[title='CATATAN']",
+            "nav >> text=CATATAN",
+            "[class*='sidebar'] >> text=CATATAN",
+            "aside >> text=CATATAN",
+            "text=CATATAN"
+        ]:
             try:
                 loc = review_tab.locator(nav_sel)
                 if loc.count() > 0 and loc.first.is_visible():
@@ -826,7 +985,7 @@ def process_assignment(context, url, headless_mode, dry_run):
                 el = all_catatan.nth(i)
                 if el.is_visible():
                     box = el.bounding_box()
-                    if box and box["x"] < 200:
+                    if box and box["x"] < 350:
                         catatan_loc = el
                         break
                         
@@ -859,21 +1018,79 @@ def process_assignment(context, url, headless_mode, dry_run):
                 edit_url = review_tab.url.rstrip("/").replace("/edit", "") + "/edit"
                 review_tab.goto(edit_url, wait_until="domcontentloaded", timeout=60000)
 
-            print("[INFO] Tab 2: Menunggu Mode Edit dimuat...")
-            time.sleep(3)
-            
-            print("[INFO] Tab 2: Mencari dan mengeklik 'CATATAN' di sidebar kiri...")
-            catatan_edit = None
-            for nav_sel in ["nav >> text=CATATAN", "[class*='sidebar'] >> text=CATATAN", "aside >> text=CATATAN", "text=CATATAN"]:
+            print("[INFO] Tab 2: Menunggu seluruh elemen halaman Mode Edit ter-render sepenuhnya...")
+            for _ in range(20):
                 try:
-                    loc = review_tab.locator(nav_sel)
-                    if loc.count() > 0 and loc.first.is_visible():
-                        catatan_edit = loc.first
+                    body_txt = review_tab.evaluate("() => document.body ? document.body.innerText : ''")
+                    if "Kirim" in body_txt or "KIRIM" in body_txt or "CATATAN" in body_txt or "Catatan" in body_txt:
+                        print("[OK] Tab 2: Komponen Halaman Mode Edit terdeteksi selesai dimuat!")
                         break
                 except: pass
-            if catatan_edit:
-                catatan_edit.click()
-                time.sleep(2)
+                time.sleep(1)
+            time.sleep(2)
+            
+            print("[INFO] Tab 2: Mencari dan mengeklik 'CATATAN' di sidebar kiri...")
+            catatan_clicked = False
+            catatan_selectors = [
+                "div[title='CATATAN']",
+                "div[title='Catatan']",
+                "[title='CATATAN']",
+                "[title='Catatan']",
+                "nav >> text=CATATAN",
+                "[class*='sidebar'] >> text=CATATAN",
+                "aside >> text=CATATAN",
+                "text=CATATAN",
+                "text=Catatan",
+                "//span[contains(translate(text(), 'catatan', 'CATATAN'), 'CATATAN')]",
+                "//div[contains(translate(text(), 'catatan', 'CATATAN'), 'CATATAN')]",
+                "//a[contains(translate(text(), 'catatan', 'CATATAN'), 'CATATAN')]"
+            ]
+            
+            start_t = time.time()
+            while time.time() - start_t < 20:
+                for nav_sel in catatan_selectors:
+                    try:
+                        loc = review_tab.locator(nav_sel)
+                        for idx in range(loc.count()):
+                            item = loc.nth(idx)
+                            if item.is_visible():
+                                box = item.bounding_box()
+                                if box and box['x'] < 350:
+                                    print(f"[OK] Tab 2: Menemukan 'CATATAN' di sidebar kiri (x={box['x']}, y={box['y']}). Mengeklik...")
+                                    item.scroll_into_view_if_needed()
+                                    item.click(force=True)
+                                    catatan_clicked = True
+                                    break
+                        if catatan_clicked: break
+                    except: pass
+                if catatan_clicked: break
+                time.sleep(1)
+
+            if not catatan_clicked:
+                print("[WARN] Tab 2: Mencoba JS click fallback untuk menu 'CATATAN' di sidebar...")
+                js_click_catatan = """
+                () => {
+                    let els = Array.from(document.querySelectorAll('*'));
+                    let target = els.find(e => e.offsetWidth > 0 && e.offsetHeight > 0 && e.getBoundingClientRect().x < 350 && e.innerText && e.innerText.trim().toUpperCase() === 'CATATAN');
+                    if (target) {
+                        target.click();
+                        let parent = target.closest('a, button, li, div[role="button"]');
+                        if (parent && parent !== target) parent.click();
+                        return true;
+                    }
+                    return false;
+                }
+                """
+                catatan_clicked = review_tab.evaluate(js_click_catatan)
+
+            print("[INFO] Tab 2: Menunggu form CATATAN & switchbox dimuat di layar...")
+            for _ in range(15):
+                try:
+                    if review_tab.locator("text=Tampilkan Anomali Usaha dan Keluarga").first.is_visible():
+                        print("[SUCCESS] Tab 2: Form CATATAN & Switchbox 'Tampilkan Anomali Usaha dan Keluarga' BERHASIL terlihat di layar!")
+                        break
+                except: pass
+                time.sleep(1)
 
             print("[INFO] Tab 2: Mengaktifkan switchbox 'Tampilkan Anomali Usaha dan Keluarga' di Mode Edit...")
             toggle_checkbox_by_label(review_tab, "Tampilkan Anomali Usaha dan Keluarga", True)
@@ -884,35 +1101,51 @@ def process_assignment(context, url, headless_mode, dry_run):
             time.sleep(1)
 
             print("[INFO] Tab 2: Mengeklik tombol KIRIM...")
-            kirim_btn = review_tab.locator("button:has-text('KIRIM'):visible, button:has-text('Kirim'):visible").first
+            # Tombol KIRIM di header edit mode: class tw:bg-primary, ikon send SVG, teks 'Kirim'
+            kirim_btn = review_tab.locator("button[class*='tw:bg-primary']:has-text('Kirim')").first
+            if kirim_btn.count() == 0 or not kirim_btn.is_visible():
+                kirim_btn = review_tab.locator("button:has-text('Kirim')").first
             if kirim_btn.count() > 0:
-                kirim_btn.click()
+                kirim_btn.click(force=True)
             time.sleep(2)
 
-            print("[INFO] Tab 2: Konfirmasi modal KIRIM...")
-            modal_kirim1 = review_tab.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Kirim'):visible, button:has-text('KIRIM'):visible").first
+            print("[INFO] Tab 2: Konfirmasi modal KIRIM (tombol 'Kirim' di popup)...")
+            # Popup KIRIM: class tw:bg-primary, teks 'Kirim' (bukan konfirmasi)
+            modal_kirim1 = review_tab.locator("[role='dialog'] button[class*='tw:bg-primary']:has-text('Kirim')").first
+            if modal_kirim1.count() == 0 or not modal_kirim1.is_visible():
+                modal_kirim1 = review_tab.locator("[role='dialog'] button:has-text('Kirim')").first
             if modal_kirim1.count() > 0:
-                modal_kirim1.click()
+                modal_kirim1.click(force=True)
                 time.sleep(2)
 
-            modal_kirim2 = review_tab.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("button:has-text('Konfirmasi'):visible, button:has-text('KONFIRMASI'):visible").first
+            print("[INFO] Tab 2: Konfirmasi popup kedua KIRIM (tombol 'Konfirmasi')...")
+            # Popup konfirmasi: class tw:bg-primary, teks 'Konfirmasi'
+            modal_kirim2 = review_tab.locator("[role='dialog'] button[class*='tw:bg-primary']:has-text('Konfirmasi')").first
+            if modal_kirim2.count() == 0 or not modal_kirim2.is_visible():
+                modal_kirim2 = review_tab.locator("[role='dialog'] button:has-text('Konfirmasi')").first
             if modal_kirim2.count() > 0:
-                modal_kirim2.click()
+                modal_kirim2.click(force=True)
                 time.sleep(2)
 
             print("[INFO] Tab 2: Kembali ke Halaman Review pasca-Kirim...")
             try:
-                back_fab = review_tab.locator("button[title*='Kembali']:visible").first
-                if back_fab.count() > 0:
+                # Tombol Kembali: data-tsd-source draggable-toolbar.tsx:123, ikon tabler-icon-arrow-left
+                back_fab = review_tab.locator("button:has(.tabler-icon-arrow-left)").first
+                if back_fab.count() == 0 or not back_fab.is_visible():
+                    back_fab = review_tab.locator("[data-tsd-source*='draggable-toolbar.tsx:123']").first
+                if back_fab.count() == 0 or not back_fab.is_visible():
+                    back_fab = review_tab.locator("button[title*='Kembali']").first
+                if back_fab.count() > 0 and back_fab.is_visible():
                     back_fab.click(force=True, timeout=5000)
-                else:
-                    review_tab.locator("#fasih-fab-root button").first.click(force=True, timeout=5000)
                 time.sleep(2)
             except: pass
 
-            leave_btn = review_tab.locator("div[role='dialog'] button:has-text('Keluar'), div[role='alertdialog'] button:has-text('Keluar'), div[role='dialog'] button:has-text('Tinggalkan')").first
+            # Tombol Tinggalkan di popup: class f:bg-warning, teks 'Tinggalkan'
+            leave_btn = review_tab.locator("[role='dialog'] button[class*='bg-warning']:has-text('Tinggalkan')").first
+            if leave_btn.count() == 0 or not leave_btn.is_visible():
+                leave_btn = review_tab.locator("[role='dialog'] button:has-text('Tinggalkan'), [role='dialog'] button:has-text('Keluar')").first
             if leave_btn.count() > 0:
-                leave_btn.click()
+                leave_btn.click(force=True)
                 time.sleep(3)
 
             print("[INFO] Tab 2: Kembali di Halaman Review. Menyiapkan proses Reject...")
@@ -932,9 +1165,14 @@ def process_assignment(context, url, headless_mode, dry_run):
         
         time.sleep(2)
         print("[INFO] Tab 2: Membaca tombol konfirmasi Reject...")
-        confirm_reject_btn = review_tab.locator("div.ant-modal-content, div[role='dialog'], div[role='alertdialog']").locator("text=KONFIRMASI").first
+        # Tombol Konfirmasi Reject: class f:bg-destructive, teks 'Konfirmasi' (dari action-reject.tsx)
+        confirm_reject_btn = review_tab.locator("[role='dialog'] button[class*='bg-destructive']:has-text('Konfirmasi')").first
+        if confirm_reject_btn.count() == 0 or not confirm_reject_btn.is_visible():
+            confirm_reject_btn = review_tab.locator("[data-tsd-source*='action-reject.tsx']:has-text('Konfirmasi')").first
+        if confirm_reject_btn.count() == 0 or not confirm_reject_btn.is_visible():
+            confirm_reject_btn = review_tab.locator("[role='dialog'] button:has-text('Konfirmasi')").first
         if confirm_reject_btn.count() == 0:
-            confirm_reject_btn = review_tab.locator("text=KONFIRMASI").last
+            confirm_reject_btn = review_tab.locator("text=Konfirmasi").last
 
         if dry_run:
             print("[DRY_RUN] Menghentikan klik KONFIRMASI reject agar assignment tetap utuh.")
@@ -1052,7 +1290,7 @@ def run_automation():
                 print("\n[PETUNJUK JALANKAN CHROME]")
                 print("1. Tutup SEMUA jendela Chrome yang sedang terbuka.")
                 print(r'2. Jalankan perintah ini di CMD:')
-                print(r'   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeAutomationProfile"')
+                print(r'   "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeAutomationProfile" --disable-blink-features=AutomationControlled')
                 print("3. Di Chrome tersebut, buka https://fasih-sm.bps.go.id/app dan login secara manual hingga masuk ke Dashboard.")
                 print("4. Setelah berhasil di Dashboard, jalankan ulang skrip python ini.")
                 return
@@ -1087,8 +1325,9 @@ def run_automation():
             if not login_success:
                 print("[WARN] Sesi login belum aktif. Melanjutkan ke alur pemrosesan URL (skrip akan tetap mencoba memproses)...")
 
+            main_tab = sso_tab
             for idx_url, url in enumerate(target_urls):
-                status = process_assignment(context, url, headless_mode, dry_run)
+                status = process_assignment(main_tab, url, headless_mode, dry_run)
  
                 # Jika terdeteksi bot (ERROR_BOT_DETECTED) / Sesi Rusak, LANGSUNG BUNYIKAN ALARM DAN PAUSE TERMINAL INSTAN!
                 if status in ["ERROR_BOT_DETECTED", "ERROR_SESSION", "ERROR_CAPTCHA_TIMEOUT"]:
@@ -1120,17 +1359,18 @@ def run_automation():
                         context = browser.contexts[0]
                         apply_stealth_to_context(context)
                         print("[SUCCESS] Berhasil terhubung kembali ke Chrome!")
+                        main_tab = context.pages[0] if len(context.pages) > 0 else context.new_page()
                     except Exception as e_reconnect:
                         print(f"[ERROR] Gagal terhubung kembali ke Chrome: {e_reconnect}. Menghentikan batch.")
                         break
                         
                     print("[INFO] Memproses ulang URL setelah Anda memberikan konfirmasi...")
-                    status = process_assignment(context, url, headless_mode, dry_run)
+                    status = process_assignment(main_tab, url, headless_mode, dry_run)
                 
                 # Cek jika reject gagal karena interupsi server / CAPTCHA biasa
                 if status in ["ERROR_CAPTCHA_INTERRUPT", "ERROR_SERVER_REJECT", "ERROR_SUBMIT_EDIT"]:
                     print(f"[WARN] Status {status}. Mencoba ulang URL ini 1 kali lagi...")
-                    status = process_assignment(context, url, headless_mode, dry_run)
+                    status = process_assignment(main_tab, url, headless_mode, dry_run)
  
                 assignment_id = url.split("/")[-1] if "/" in url else url
                 print(f"[RESULT] #{idx_url + 1} | ID: {assignment_id[-8:]} -> {status}")
