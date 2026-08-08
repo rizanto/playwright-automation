@@ -8,7 +8,10 @@ from playwright.sync_api import sync_playwright
 # Masukkan folder parent (root) ke dalam system path agar bisa mengimpor vpn_auto_connect
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
-sys.path.append(current_dir)
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
 
 import vpn_auto_connect
 from humanizer import human_click, human_move_to, human_type, human_scroll

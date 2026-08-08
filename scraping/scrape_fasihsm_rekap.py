@@ -300,6 +300,7 @@ def run(auto_profile_idx=None):
         print("Menavigasi ke URL target dasbor kegiatan (menunggu hingga 4 menit)...")
         try:
             page.goto(target_url, timeout=240000, wait_until="domcontentloaded")
+            time.sleep(3)  # Jeda 3 detik agar navigasi internal SPA BPS tenang sebelum manipulasi DOM
         except Exception as e:
             print("Peringatan saat load URL target:", e)
             
@@ -349,27 +350,31 @@ def run(auto_profile_idx=None):
                 # Polling for Rekap Petugas up to 2 minutes
                 rekap_clicked = False
                 for i in range(60):
-                    if page.evaluate(js_click_rekap):
-                        rekap_clicked = True
-                        break
-                        
-                    # Deteksi halaman error 500 dari BPS
-                    is_error_page = page.evaluate("() => document.body.innerText.includes(\"There's some error\") || document.body.innerText.includes(\"The server encountered an unexpected condition\")")
-                    if is_error_page:
-                        if not vpn_auto_connect.is_vpn_connected():
-                            print("\n[!] VPN terdeteksi TERPUTUS! Menghubungkan kembali VPN...")
-                            vpn_auto_connect.run_auto_vpn()
-                            time.sleep(5)
-                        else:
-                            print("\n[!] Terdeteksi halaman error dari server BPS. Memperbarui session via login ulang di tab baru...")
-                            refresh_session(context, username, password)
-                        print("Merefresh halaman utama (F5)...")
-                        try:
-                            page.reload(timeout=120000, wait_until="domcontentloaded")
-                            time.sleep(5)
-                        except:
-                            pass
+                    try:
+                        if page.evaluate(js_click_rekap):
+                            rekap_clicked = True
+                            break
                             
+                        # Deteksi halaman error 500 dari BPS
+                        is_error_page = page.evaluate("() => document.body.innerText.includes(\"There's some error\") || document.body.innerText.includes(\"The server encountered an unexpected condition\")")
+                        if is_error_page:
+                            if not vpn_auto_connect.is_vpn_connected():
+                                print("\n[!] VPN terdeteksi TERPUTUS! Menghubungkan kembali VPN...")
+                                vpn_auto_connect.run_auto_vpn()
+                                time.sleep(5)
+                            else:
+                                print("\n[!] Terdeteksi halaman error dari server BPS. Memperbarui session via login ulang di tab baru...")
+                                refresh_session(context, username, password)
+                            print("Merefresh halaman utama (F5)...")
+                            try:
+                                page.reload(timeout=120000, wait_until="domcontentloaded")
+                                time.sleep(5)
+                            except:
+                                pass
+                    except Exception:
+                        # Context destroyed karena halaman sedang meredirect/navigasi SPA, abaikan & lanjut iterasi berikutnya
+                        pass
+                        
                     time.sleep(2)
                     
                 if not rekap_clicked:
@@ -414,8 +419,11 @@ def run(auto_profile_idx=None):
                 """
                 
                 # Coba klik target role berulang-ulang sebentar untuk memastikan request baru terpancing
-                for i in range(3):
-                    page.evaluate(js_click_role)
+                for i in range(5):
+                    try:
+                        page.evaluate(js_click_role)
+                    except Exception:
+                        pass
                     time.sleep(2)
                     
                 print("Menunggu request jaringan stabil (3 detik)...")
@@ -430,7 +438,7 @@ def run(auto_profile_idx=None):
                     
                     # Gunakan payload asli yang ditangkap dari browser (preserves regional filters & scope)
                     base_payload = raw_payload.copy()
-                    base_payload["size"] = 5  # Ukuran native 5 per halaman BPS (100% presisi tanpa pergeseran pagination)
+                    base_payload["size"] = 10  # Ukuran standar 10 (maksimum valid yang didukung API BPS tanpa HTTP 400 Validation Error)
                     print(f"[DEBUG] Base Payload yang akan digunakan: {json.dumps(base_payload)}")
                 else:
                     print(f"Peringatan: Tidak ada network request 'report-progress-by-responsibility' yang tertangkap.")
@@ -445,7 +453,7 @@ def run(auto_profile_idx=None):
             base_payload = {
                 "surveyPeriodId": survey_period_id,
                 "surveyRoleId": survey_role_id,
-                "size": 5,
+                "size": 10,
                 "page": 0,
                 "search": "",
                 "target": "TARGET_ONLY",
@@ -553,7 +561,7 @@ def run(auto_profile_idx=None):
             
             const xsrf = decodeURIComponent(getCookie('XSRF-TOKEN'));
             const url = '/app/api/analytic/api/v2/assignment/report-progress-by-responsibility';
-            const pageSize = basePayload.size || 5;
+            const pageSize = basePayload.size || 10;
             
             let payload = { ...basePayload, page: pageIndex, size: pageSize };
             
@@ -594,40 +602,41 @@ def run(auto_profile_idx=None):
                         is_last = data["data"].get("last", True)
                         print(f"✅ Sukses! (+{len(content)} petugas. Terkumpul: {len(all_records)} / Total Server: {total_elements})")
                         success = True
-                        time.sleep(0.3)  # Jeda 0.3s antar halaman untuk mencegah HTTP 429 Rate Limit
+                        time.sleep(0.5)  # Jeda 0.5s antar halaman untuk mencegah HTTP 429 Rate Limit WAF BPS
                     else:
                         print("Tidak ada data. (Selesai)")
                         is_last = True
                         success = True
                 except Exception as e:
-                    retries -= 1
                     err_msg = str(e)
                     if "429" in err_msg or "RATE_LIMIT" in err_msg:
-                        print(f"\n⚠️ Terkena Rate Limit Server BPS (HTTP 429). Beristirahat 15 detik...")
-                        time.sleep(15)
-                    else:
-                        wait_time = (5 - retries) * 5
-                        print(f"\n⚠️ Gagal: Server Fasih lambat atau error (Sisa percobaan: {retries}).")
-                        if retries > 0:
-                            print(f"Menunggu {wait_time} detik sebelum mencoba lagi agar server lega...")
-                            time.sleep(wait_time)
-                            
-                            # Refresh halaman untuk mereset koneksi dan XSRF-TOKEN
-                            if not vpn_auto_connect.is_vpn_connected():
-                                print("\n[!] VPN terdeteksi TERPUTUS saat penarikan data! Menghubungkan kembali VPN...")
-                                vpn_auto_connect.run_auto_vpn()
-                                time.sleep(5)
-                            else:
-                                print("Memperbarui session via login ulang di tab baru...")
-                                refresh_session(context, username, password)
-                            print("Mencoba merefresh halaman (F5) untuk memulihkan koneksi API...")
-                            try:
-                                page.reload(timeout=60000, wait_until="domcontentloaded")
-                                time.sleep(5)
-                            except:
-                                pass
+                        print(f"\n⚠️ Terkena Rate Limit Server BPS (HTTP 429). Beristirahat 20 detik...")
+                        time.sleep(20)
+                        continue  # Ulangi percobaan untuk halaman yang sama tanpa mengurangi kuota retries
+                    
+                    retries -= 1
+                    wait_time = (5 - retries) * 5
+                    print(f"\n⚠️ Gagal: Server Fasih lambat atau error (Sisa percobaan: {retries}).")
+                    if retries > 0:
+                        print(f"Menunggu {wait_time} detik sebelum mencoba lagi agar server lega...")
+                        time.sleep(wait_time)
+                        
+                        # Refresh halaman untuk mereset koneksi dan XSRF-TOKEN
+                        if not vpn_auto_connect.is_vpn_connected():
+                            print("\n[!] VPN terdeteksi TERPUTUS saat penarikan data! Menghubungkan kembali VPN...")
+                            vpn_auto_connect.run_auto_vpn()
+                            time.sleep(5)
                         else:
-                            print(f"❌ Error detail: {err_msg}")
+                            print("Memperbarui session via login ulang di tab baru...")
+                            refresh_session(context, username, password)
+                        print("Mencoba merefresh halaman (F5) untuk memulihkan koneksi API...")
+                        try:
+                            page.reload(timeout=60000, wait_until="domcontentloaded")
+                            time.sleep(5)
+                        except:
+                            pass
+                    else:
+                        print(f"❌ Error detail: {err_msg}")
             
             if not success:
                 print(f"\n❌ TERHENTI di Halaman {current_page + 1} karena server Fasih terus-menerus gagal merespons.")
@@ -684,18 +693,20 @@ def run(auto_profile_idx=None):
                 else:
                     unique_records.append(officer)
             
-            # Verifikasi kelengkapan: Jika petugas unik yang ditarik kurang dari total_elements server BPS, jalankan Sweep Audit
-            if total_elements > 0 and len(unique_records) < total_elements:
-                missing_count = total_elements - len(unique_records)
-                print(f"\n⚠️ Terdeteksi {missing_count} petugas belum lengkap ({len(unique_records)} unik terkumpul vs {total_elements} total server).")
-                print("[INFO] Menjalankan Sweep Audit Otomatis (Mode Size Native BPS: 5) untuk melengkapi petugas yang tergeser...")
+            # Verifikasi kelengkapan: Jika total item mentah kurang dari total_elements server BPS, jalankan Sweep Audit
+            raw_collected = len(all_records)
+            if total_elements > 0 and raw_collected < total_elements:
+                missing_count = total_elements - raw_collected
+                print(f"\n⚠️ Terdeteksi {missing_count} item tergeser perbatasan pagination ({raw_collected} mentah vs {total_elements} total server).")
+                print("[INFO] Menjalankan Sweep Audit Otomatis (Size = 10) untuk melengkapi petugas...")
+                time.sleep(3)  # Istirahat 3 detik sebelum Sweep Audit untuk mengosongkan kuota WAF
                 
                 sweep_payload = base_payload.copy()
-                sweep_payload["size"] = 5
+                sweep_payload["size"] = 10
                 sweep_page = 0
                 sweep_last = False
                 
-                while not sweep_last and len(unique_records) < total_elements:
+                while not sweep_last and len(all_records) < total_elements:
                     sweep_retries = 3
                     while sweep_retries > 0:
                         try:
@@ -715,26 +726,27 @@ def run(auto_profile_idx=None):
                                 sweep_last = True
                             break
                         except Exception as e_sweep:
-                            sweep_retries -= 1
                             err_s = str(e_sweep)
                             if "429" in err_s or "RATE_LIMIT" in err_s:
                                 print(f"[WARN] Rate limit saat Sweep Audit. Istirahat 15 detik...")
                                 time.sleep(15)
-                            else:
-                                time.sleep(2)
+                                continue
+                            
+                            sweep_retries -= 1
+                            time.sleep(2)
                     sweep_page += 1
-                    time.sleep(0.3)
+                    time.sleep(0.4)
                     if sweep_page > 60:
                         break
 
             print(f"[INFO] Total petugas unik final: {len(unique_records)} (Total item mentah: {len(all_records)} / Total server BPS: {total_elements})")
 
             # KRITERIA UTAMA PEMBATALAN:
-            # Ekspor dibatalkan HANYA DAN PASTI JIKA total petugas unik KURANG dari totalElements server BPS
-            if total_elements > 0 and len(unique_records) < total_elements:
-                missing_records = total_elements - len(unique_records)
+            # Ekspor dibatalkan HANYA JIKA total item mentah yang berhasil ditarik KURANG dari totalElements server BPS
+            if total_elements > 0 and len(all_records) < total_elements:
+                missing_records = total_elements - len(all_records)
                 print("\n" + "!"*70)
-                print(f"❌ [ERROR CRITICAL] Scraping GAGAL LENGKAP ({len(unique_records)} petugas unik terkumpul vs {total_elements} total di server BPS, kurang {missing_records} petugas)!")
+                print(f"❌ [ERROR CRITICAL] Scraping GAGAL LENGKAP ({len(all_records)} item mentah terkumpul vs {total_elements} total di server BPS, kurang {missing_records} item)!")
                 print("📌 PENGIRIMAN KE GOOGLE SHEETS DIBATALKAN UNTUK MENJAGA INTEGRITAS SPREADSHEET!")
                 print("!"*70 + "\n")
                 
